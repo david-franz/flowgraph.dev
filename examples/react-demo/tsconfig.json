@@ -6,7 +6,11 @@
     "moduleResolution": "Node",
     "allowImportingTsExtensions": true,
     "noEmit": false,
-    "outDir": "dist-types"
+    "outDir": "dist-types",
+    "paths": {
+      "@flowtomic/flowgraph": ["../../src"],
+      "@flowtomic/flowgraph/*": ["../../src/*"]
+    }
   },
   "include": ["src"],
   "references": [
