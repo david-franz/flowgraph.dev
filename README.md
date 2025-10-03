@@ -53,6 +53,19 @@ graph.subscribe(event => {
 });
 ```
 
+## React demo playground
+
+A minimal React/Vite playground lives in [`examples/react-demo`](./examples/react-demo). It consumes the library straight from source so you can iterate without publishing the package.
+
+```bash
+# from the flowgraph/ directory
+cd examples/react-demo
+npm install
+npm run dev
+```
+
+The development server renders the current graph state, allows you to add sample nodes, and demonstrates subscriptions to `FlowGraph` change events. Because the example resolves `@flowtomic/flowgraph` to `../src`, any edits to the core library hot-reload immediately.
+
 ## Roadmap
 
 - [ ] Rich validation hooks for custom business rules
