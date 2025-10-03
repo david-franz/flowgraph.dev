@@ -1,0 +1,25 @@
+{
+  "name": "@flowtomic/flowgraph",
+  "version": "0.0.1",
+  "description": "Core graph data structures and state management for Flowtomic UI.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "graph",
+    "flow",
+    "workflow",
+    "flowtomic"
+  ],
+  "author": "Flowtomic",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
