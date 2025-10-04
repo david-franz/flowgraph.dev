@@ -1,0 +1,154 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  color: #e2e8f0;
+}
+
+.sidebar {
+  width: 280px;
+  padding: 2rem 1.75rem;
+  background: rgba(15, 23, 42, 0.85);
+  border-right: 1px solid rgba(148, 163, 184, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.sidebar h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.sidebar p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.sidebar-controls button,
+.sidebar-list li button {
+  background: linear-gradient(120deg, #22d3ee, #6366f1);
+  color: #0f172a;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.75rem;
+  padding: 0.6rem 1.1rem;
+  cursor: pointer;
+}
+
+.sidebar-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sidebar-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.coords {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.canvas-wrapper {
+  flex: 1;
+  padding: 1.5rem 1.5rem 1.5rem 0.5rem;
+}
+
+.canvas {
+  position: relative;
+  background: radial-gradient(circle at top left, rgba(45, 212, 191, 0.08), transparent 40%),
+    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 45%),
+    rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 1.25rem;
+  height: 540px;
+  overflow: hidden;
+}
+
+.canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(transparent, transparent 39px, rgba(148, 163, 184, 0.06) 40px),
+    linear-gradient(90deg, transparent, transparent 39px, rgba(148, 163, 184, 0.06) 40px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+
+.edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.edge {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.3));
+}
+
+.node {
+  position: absolute;
+  width: 180px;
+  height: 100px;
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 0.75rem 1rem;
+  box-shadow: 0 20px 30px -18px rgba(15, 23, 42, 0.9);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  backdrop-filter: blur(18px);
+}
+
+.node header {
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.node section {
+  font-size: 0.8rem;
+  color: #cbd5f5;
+}
+
+.node section h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.15rem;
+  color: #818cf8;
+}
+
+.node section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.node section li {
+  display: flex;
+  justify-content: space-between;
+  color: #94a3b8;
+}
+
+.node code {
+  background: rgba(148, 163, 184, 0.12);
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.5rem;
+}

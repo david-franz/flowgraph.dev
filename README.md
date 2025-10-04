@@ -53,18 +53,21 @@ graph.subscribe(event => {
 });
 ```
 
-## React demo playground
+## React demos
 
-A minimal React/Vite playground lives in [`examples/react-demo`](./examples/react-demo). It consumes the library straight from source so you can iterate without publishing the package.
+Two Vite playgrounds live under `examples/` and both resolve `@flowtomic/flowgraph` directly to `../src`, so edits to the library hot-reload immediately:
+
+- [`react-demo`](./examples/react-demo): feature-focused inspector that lists nodes, connections, and offers quick actions to mutate the graph.
+- [`react-minimal`](./examples/react-minimal): renders the graph as positioned cards with bezier SVG connections for a visual proof-of-concept.
 
 ```bash
 # from the flowgraph/ directory
-cd examples/react-demo
+cd examples/react-demo   # or examples/react-minimal
 npm install
 npm run dev
 ```
 
-The development server renders the current graph state, allows you to add sample nodes, and demonstrates subscriptions to `FlowGraph` change events. Because the example resolves `@flowtomic/flowgraph` to `../src`, any edits to the core library hot-reload immediately.
+The development server renders the current graph state, allows you to add sample nodes, and demonstrates subscriptions to `FlowGraph` change events.
 
 ## Roadmap
 
