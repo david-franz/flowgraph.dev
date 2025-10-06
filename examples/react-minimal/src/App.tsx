@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type {
-  FlowGraphState,
-  GraphConnection,
-  GraphNode,
-  GraphPort,
-  PortAddress,
-} from '@flowtomic/flowgraph';
+import type { FlowGraphState, GraphConnection, GraphNode, GraphPort, PortAddress } from '@flowtomic/flowgraph';
 import { FlowGraph } from '@flowtomic/flowgraph';
 import './App.css';
 
@@ -192,16 +186,6 @@ const App = (): JSX.Element => {
       const canvasRect = canvasRef.current?.getBoundingClientRect();
       if (!canvasRect) return;
 
-      const candidate = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-      let hover: PortAddress | null = null;
-      if (candidate?.dataset.portDirection === 'input') {
-        const nodeId = candidate.dataset.nodeId;
-        const portId = candidate.dataset.portId;
-        if (nodeId && portId) {
-          hover = { nodeId, portId };
-        }
-      }
-
       setDraft(prev =>
         prev && prev.pointerId === event.pointerId
           ? {
@@ -210,7 +194,6 @@ const App = (): JSX.Element => {
                 x: event.clientX - canvasRect.left,
                 y: event.clientY - canvasRect.top,
               },
-              hoverTarget: hover,
             }
           : prev,
       );
@@ -219,7 +202,8 @@ const App = (): JSX.Element => {
     const handlePointerUp = (event: PointerEvent) => {
       if (event.pointerId !== draft.pointerId) return;
       setDraft(prev => {
-        if (prev && prev.hoverTarget) {
+        if (!prev) return null;
+        if (prev.hoverTarget) {
           try {
             graph.addConnection({ source: prev.source, target: prev.hoverTarget });
           } catch (err) {
@@ -279,6 +263,22 @@ const App = (): JSX.Element => {
       });
     },
     [getPortCenter],
+  );
+
+  const handlePortEnter = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode, port: GraphPort) => {
+      if (!draft || port.direction !== 'input' || event.pointerId !== draft.pointerId) return;
+      setDraft(prev => (prev ? { ...prev, hoverTarget: { nodeId: node.id, portId: port.id } } : prev));
+    },
+    [draft],
+  );
+
+  const handlePortLeave = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode, port: GraphPort) => {
+      if (!draft || port.direction !== 'input' || event.pointerId !== draft.pointerId) return;
+      setDraft(prev => (prev ? { ...prev, hoverTarget: null } : prev));
+    },
+    [draft],
   );
 
   const getConnectionPath = useCallback(
@@ -402,6 +402,8 @@ const App = (): JSX.Element => {
                             data-node-id={node.id}
                             data-port-direction={port.direction}
                             ref={element => setPortRef(address, element)}
+                            onPointerEnter={event => handlePortEnter(event, node, port)}
+                            onPointerLeave={event => handlePortLeave(event, node, port)}
                           />
                         )}
                         <div className="port-label">
