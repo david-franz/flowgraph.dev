@@ -156,6 +156,12 @@ body {
   overflow: hidden;
 }
 
+.canvas-stage {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 .canvas::after {
   content: '';
   position: absolute;

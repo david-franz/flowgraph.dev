@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent, ChangeEvent } from 'react';
+import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type {
   FlowGraphState,
+  FlowGraphNavigatorItem,
+  FlowGraphNavigatorSection,
   GraphConnection,
   GraphNode,
   GraphPort,
   NodeFormField,
   NodeFormSchema,
   PortAddress,
-  FlowGraphNavigatorItem,
-  FlowGraphNavigatorSection,
 } from '@flowtomic/flowgraph';
 import { FlowGraph, buildNavigatorSummary } from '@flowtomic/flowgraph';
 
@@ -32,6 +32,20 @@ interface ConnectionDraft {
   hoverTarget: PortAddress | null;
 }
 
+interface ViewportState {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+}
+
+interface PanState {
+  pointerId: number;
+  originX: number;
+  originY: number;
+  startOffsetX: number;
+  startOffsetY: number;
+}
+
 interface NodeTemplate {
   id: string;
   label: string;
@@ -40,11 +54,13 @@ interface NodeTemplate {
   ports: GraphPort[];
 }
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
 const nodeTemplates: NodeTemplate[] = [
   {
     id: 'script-task',
     label: 'Script Task',
-    description: 'Execute a df++ script snippet with custom variables.',
+    description: 'Execute a df++ snippet with custom variables.',
     ports: [
       { id: 'in', direction: 'input', label: 'trigger', maxConnections: 1 },
       { id: 'success', direction: 'output', label: 'success' },
@@ -70,7 +86,7 @@ const nodeTemplates: NodeTemplate[] = [
   {
     id: 'http-call',
     label: 'HTTP Call',
-    description: 'Fetch data from an external API and emit results.',
+    description: 'Fetch external data and emit results.',
     ports: [
       { id: 'in', direction: 'input', label: 'trigger', maxConnections: 1 },
       { id: 'success', direction: 'output', label: '200 OK' },
@@ -80,7 +96,7 @@ const nodeTemplates: NodeTemplate[] = [
       sections: [
         {
           id: 'http-config',
-          title: 'Request configuration',
+          title: 'HTTP request',
           fields: [
             { id: 'method', label: 'Method', kind: 'select', options: [
               { value: 'GET', label: 'GET' },
@@ -118,22 +134,14 @@ const nodeTemplates: NodeTemplate[] = [
   },
 ];
 
-const randomPosition = (): { x: number; y: number } => ({
-  x: 60 + Math.round(Math.random() * 480),
-  y: 60 + Math.round(Math.random() * 320),
+const createNodeFromTemplate = (template: NodeTemplate): GraphNode => ({
+  id: `${template.id}-${crypto.randomUUID().slice(0, 5)}`,
+  label: template.label,
+  position: { x: 80 + Math.random() * 400, y: 80 + Math.random() * 280 },
+  ports: template.ports.map(port => ({ ...port })),
+  data: {},
+  form: template.form,
 });
-
-const createNodeFromTemplate = (template: NodeTemplate): GraphNode => {
-  const position = randomPosition();
-  return {
-    id: `${template.id}-${crypto.randomUUID().slice(0, 5)}`,
-    label: template.label,
-    position,
-    ports: template.ports.map(port => ({ ...port })),
-    data: {},
-    form: template.form,
-  };
-};
 
 const App = (): JSX.Element => {
   const graph = useMemo(() => new FlowGraph(), []);
@@ -144,23 +152,22 @@ const App = (): JSX.Element => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [showNavigator, setShowNavigator] = useState(true);
+  const [viewport, setViewport] = useState<ViewportState>({ offsetX: 0, offsetY: 0, scale: 1 });
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const portElements = useRef<Map<string, HTMLDivElement | null>>(new Map());
+  const panRef = useRef<PanState | null>(null);
 
   useEffect(() => {
     if (graph.getState().nodes.length === 0) {
-      // Seed with one template of each type
-      nodeTemplates.forEach(template => {
-        graph.addNode(createNodeFromTemplate(template));
-      });
+      nodeTemplates.forEach(template => graph.addNode(createNodeFromTemplate(template)));
     }
     setSnapshot(graph.getState());
     return graph.subscribe(event => setSnapshot(event.state));
   }, [graph]);
 
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => {
+    const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setDraft(null);
         setDragging(null);
@@ -175,8 +182,8 @@ const App = (): JSX.Element => {
       }
     };
 
-    window.addEventListener('keydown', listener);
-    return () => window.removeEventListener('keydown', listener);
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
   }, [selectedConnectionId]);
 
   useEffect(() => {
@@ -191,6 +198,16 @@ const App = (): JSX.Element => {
     }
   }, [selectedConnectionId, snapshot.connections]);
 
+  useEffect(() => {
+    graph.setViewport({
+      position: {
+        x: -viewport.offsetX / viewport.scale,
+        y: -viewport.offsetY / viewport.scale,
+      },
+      zoom: viewport.scale,
+    });
+  }, [graph, viewport]);
+
   const getPortKey = (address: PortAddress) => `${address.nodeId}:${address.portId}`;
 
   const setPortRef = (address: PortAddress, element: HTMLDivElement | null) => {
@@ -199,24 +216,37 @@ const App = (): JSX.Element => {
     else portElements.current.delete(key);
   };
 
+  const screenToWorld = useCallback(
+    (screenX: number, screenY: number) => ({
+      x: (screenX - viewport.offsetX) / viewport.scale,
+      y: (screenY - viewport.offsetY) / viewport.scale,
+    }),
+    [viewport],
+  );
+
+  const clientToWorld = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvasRect = canvasRef.current?.getBoundingClientRect();
+      if (!canvasRect) return { x: 0, y: 0 };
+      return screenToWorld(clientX - canvasRect.left, clientY - canvasRect.top);
+    },
+    [screenToWorld],
+  );
+
   const getPortCenter = useCallback(
     (address: PortAddress) => {
       const element = portElements.current.get(getPortKey(address));
       const canvasRect = canvasRef.current?.getBoundingClientRect();
       if (!element || !canvasRect) return null;
       const rect = element.getBoundingClientRect();
-      return {
-        x: rect.left - canvasRect.left + rect.width / 2,
-        y: rect.top - canvasRect.top + rect.height / 2,
-      };
+      return screenToWorld(rect.left - canvasRect.left, rect.top - canvasRect.top);
     },
-    [],
+    [screenToWorld],
   );
 
   const addNodeFromTemplate = useCallback(
     (template: NodeTemplate) => {
-      const newNode = createNodeFromTemplate(template);
-      const created = graph.addNode(newNode);
+      const created = graph.addNode(createNodeFromTemplate(template));
       setSelectedNodeId(created.id);
       setFocusedNodeId(created.id);
     },
@@ -280,35 +310,43 @@ const App = (): JSX.Element => {
 
   const navigatorSummary = useMemo(() => buildNavigatorSummary(snapshot), [snapshot]);
 
+  const centerOnNode = useCallback((node: GraphNode) => {
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    const width = canvasRect?.width ?? window.innerWidth;
+    const height = canvasRect?.height ?? window.innerHeight;
+    setViewport(prev => ({
+      scale: prev.scale,
+      offsetX: width / 2 - (node.position.x + NODE_WIDTH / 2) * prev.scale,
+      offsetY: height / 2 - (node.position.y + NODE_HEIGHT / 2) * prev.scale,
+    }));
+  }, []);
+
   const handleNodePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode) => {
       if ((event.target as HTMLElement).closest('[data-port-id]')) return;
       event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
+      const world = clientToWorld(event.clientX, event.clientY);
       setDragging({
         id: node.id,
         pointerId: event.pointerId,
-        offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top,
+        offsetX: world.x - node.position.x,
+        offsetY: world.y - node.position.y,
       });
       setSelectedNodeId(node.id);
       setFocusedNodeId(node.id);
       setSelectedConnectionId(null);
     },
-    [],
+    [clientToWorld],
   );
 
   useEffect(() => {
     if (!dragging) return;
     const handlePointerMove = (event: PointerEvent) => {
       if (event.pointerId !== dragging.pointerId) return;
-      const canvasRect = canvasRef.current?.getBoundingClientRect();
-      if (!canvasRect) return;
-      const x = event.clientX - canvasRect.left - dragging.offsetX;
-      const y = event.clientY - canvasRect.top - dragging.offsetY;
+      const world = clientToWorld(event.clientX, event.clientY);
       graph.moveNode(dragging.id, {
-        x: Math.round(Math.max(0, x)),
-        y: Math.round(Math.max(0, y)),
+        x: Math.round(Math.max(0, world.x - dragging.offsetX)),
+        y: Math.round(Math.max(0, world.y - dragging.offsetY)),
       });
     };
     const handlePointerUp = (event: PointerEvent) => {
@@ -323,7 +361,7 @@ const App = (): JSX.Element => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [dragging, graph]);
+  }, [clientToWorld, dragging, graph]);
 
   const startDraft = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode, port: GraphPort) => {
@@ -332,19 +370,16 @@ const App = (): JSX.Element => {
       event.stopPropagation();
       const address: PortAddress = { nodeId: node.id, portId: port.id };
       const origin = getPortCenter(address);
-      const canvasRect = canvasRef.current?.getBoundingClientRect();
+      const fallback = clientToWorld(event.clientX, event.clientY);
       setDraft({
         pointerId: event.pointerId,
         source: address,
-        currentPoint: origin ?? {
-          x: canvasRect ? event.clientX - canvasRect.left : 0,
-          y: canvasRect ? event.clientY - canvasRect.top : 0,
-        },
+        currentPoint: origin ?? fallback,
         hoverTarget: null,
       });
       setSelectedConnectionId(null);
     },
-    [getPortCenter],
+    [clientToWorld, getPortCenter],
   );
 
   const handlePortEnter = useCallback(
@@ -367,16 +402,11 @@ const App = (): JSX.Element => {
     if (!draft) return;
     const handlePointerMove = (event: PointerEvent) => {
       if (event.pointerId !== draft.pointerId) return;
-      const canvasRect = canvasRef.current?.getBoundingClientRect();
-      if (!canvasRect) return;
       setDraft(prev =>
         prev && prev.pointerId === event.pointerId
           ? {
               ...prev,
-              currentPoint: {
-                x: event.clientX - canvasRect.left,
-                y: event.clientY - canvasRect.top,
-              },
+              currentPoint: clientToWorld(event.clientX, event.clientY),
             }
           : prev,
       );
@@ -403,7 +433,40 @@ const App = (): JSX.Element => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [draft, graph]);
+  }, [clientToWorld, draft, graph]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const pan = panRef.current;
+      if (!pan || event.pointerId !== pan.pointerId) return;
+      const deltaX = event.clientX - pan.originX;
+      const deltaY = event.clientY - pan.originY;
+      setViewport(prev => ({
+        scale: prev.scale,
+        offsetX: pan.startOffsetX + deltaX,
+        offsetY: pan.startOffsetY + deltaY,
+      }));
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const pan = panRef.current;
+      if (!pan || event.pointerId !== pan.pointerId) return;
+      panRef.current = null;
+      canvasRef.current?.releasePointerCapture(event.pointerId);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    if (panRef.current) {
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+    }
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [viewport.scale]);
 
   const getConnectionPath = useCallback(
     (connection: GraphConnection) => {
@@ -448,13 +511,48 @@ const App = (): JSX.Element => {
     [graph],
   );
 
-  const handleCanvasPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.target === canvasRef.current) {
-      setSelectedConnectionId(null);
-      setSelectedNodeId(null);
-      setFocusedNodeId(null);
-    }
-  }, []);
+  const handleCanvasPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.target === canvasRef.current) {
+        if (event.button === 1 || event.shiftKey) {
+          event.preventDefault();
+          const canvasEl = canvasRef.current;
+          if (!canvasEl) return;
+          panRef.current = {
+            pointerId: event.pointerId,
+            originX: event.clientX,
+            originY: event.clientY,
+            startOffsetX: viewport.offsetX,
+            startOffsetY: viewport.offsetY,
+          };
+          canvasEl.setPointerCapture(event.pointerId);
+          return;
+        }
+        setSelectedConnectionId(null);
+        setSelectedNodeId(null);
+        setFocusedNodeId(null);
+      }
+    },
+    [viewport.offsetX, viewport.offsetY],
+  );
+
+  const handleCanvasWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const canvasRect = canvasRef.current?.getBoundingClientRect();
+      if (!canvasRect) return;
+      const pointerX = event.clientX - canvasRect.left;
+      const pointerY = event.clientY - canvasRect.top;
+      const scaleFactor = Math.exp(-event.deltaY * 0.0012);
+      const nextScale = clamp(viewport.scale * scaleFactor, 0.45, 2.3);
+      const worldX = (pointerX - viewport.offsetX) / viewport.scale;
+      const worldY = (pointerY - viewport.offsetY) / viewport.scale;
+      const nextOffsetX = pointerX - worldX * nextScale;
+      const nextOffsetY = pointerY - worldY * nextScale;
+      setViewport({ offsetX: nextOffsetX, offsetY: nextOffsetY, scale: nextScale });
+    },
+    [viewport],
+  );
 
   const handleNavigatorItemClick = useCallback(
     (section: FlowGraphNavigatorSection, item: FlowGraphNavigatorItem) => {
@@ -462,12 +560,14 @@ const App = (): JSX.Element => {
         setSelectedNodeId(item.id);
         setFocusedNodeId(item.id);
         setSelectedConnectionId(null);
+        const node = snapshot.nodes.find(n => n.id === item.id);
+        if (node) centerOnNode(node);
       }
       if (section.kind === 'connections') {
         setSelectedConnectionId(item.id);
       }
     },
-    [],
+    [centerOnNode, snapshot.nodes],
   );
 
   const handleFieldChange = useCallback(
@@ -531,93 +631,104 @@ const App = (): JSX.Element => {
 
       <main className="workspace">
         <div className="canvas-container">
-          <div className="canvas" ref={canvasRef} onPointerDown={handleCanvasPointerDown}>
-            <svg className="edges" width="100%" height="100%">
-              <defs>
-                <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-                  <path d="M2,2 L10,6 L2,10" fill="none" stroke="currentColor" strokeWidth="2" />
-                </marker>
-              </defs>
-              {snapshot.connections.map(connection => {
-                const path = getConnectionPath(connection);
-                if (!path) return null;
-                const isSelected = selectedConnectionId === connection.id;
-                return (
-                  <path
-                    key={connection.id}
-                    d={path}
-                    className={`edge${isSelected ? ' edge--selected' : ''}`}
-                    markerEnd="url(#arrow)"
-                    onPointerDown={event => {
-                      event.preventDefault();
-                      setSelectedConnectionId(connection.id);
-                    }}
-                    onDoubleClick={() => deleteConnection(connection.id)}
-                  />
-                );
-              })}
-              {draft
-                ? (() => {
-                    const start = getPortCenter(draft.source);
-                    if (!start) return null;
-                    const controlOffset = Math.max(80, Math.abs(draft.currentPoint.x - start.x) / 2);
-                    const path = `M ${start.x} ${start.y} C ${start.x + controlOffset} ${start.y}, ${draft.currentPoint.x - controlOffset} ${draft.currentPoint.y}, ${draft.currentPoint.x} ${draft.currentPoint.y}`;
-                    return <path d={path} className="edge edge--draft" markerEnd="url(#arrow)" />;
-                  })()
-                : null}
-            </svg>
+          <div
+            className="canvas"
+            ref={canvasRef}
+            onPointerDown={handleCanvasPointerDown}
+            onWheel={handleCanvasWheel}
+          >
+            <div
+              className="canvas-stage"
+              style={{ transform: `translate(${viewport.offsetX}px, ${viewport.offsetY}px) scale(${viewport.scale})`, transformOrigin: '0 0' }}
+            >
+              <svg className="edges" width="100%" height="100%" viewBox="0 0 2200 1400">
+                <defs>
+                  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M2,2 L10,6 L2,10" fill="none" stroke="currentColor" strokeWidth="2" />
+                  </marker>
+                </defs>
+                {snapshot.connections.map(connection => {
+                  const path = getConnectionPath(connection);
+                  if (!path) return null;
+                  const isSelected = selectedConnectionId === connection.id;
+                  return (
+                    <path
+                      key={connection.id}
+                      d={path}
+                      className={`edge${isSelected ? ' edge--selected' : ''}`}
+                      markerEnd="url(#arrow)"
+                      onPointerDown={event => {
+                        event.preventDefault();
+                        setSelectedConnectionId(connection.id);
+                      }}
+                      onDoubleClick={() => deleteConnection(connection.id)}
+                    />
+                  );
+                })}
+                {draft
+                  ? (() => {
+                      const start = getPortCenter(draft.source);
+                      if (!start) return null;
+                      const controlOffset = Math.max(80, Math.abs(draft.currentPoint.x - start.x) / 2);
+                      const path = `M ${start.x} ${start.y} C ${start.x + controlOffset} ${start.y}, ${draft.currentPoint.x - controlOffset} ${draft.currentPoint.y}, ${draft.currentPoint.x} ${draft.currentPoint.y}`;
+                      return <path d={path} className="edge edge--draft" markerEnd="url(#arrow)" />;
+                    })()
+                  : null}
+              </svg>
 
-            {snapshot.nodes.map(node => (
-              <div
-                key={node.id}
-                className={`node${dragging?.id === node.id ? ' dragging' : ''}${focusedNodeId === node.id ? ' focused' : ''}`}
-                style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)` }}
-                onPointerDown={event => handleNodePointerDown(event, node)}
-              >
-                <header>
-                  <span>{node.label}</span>
-                  <button type="button" onClick={() => duplicateNode(node)}>Duplicate</button>
-                </header>
-                <section>
-                  <h3>Ports</h3>
-                  <ul className="ports">
-                    {node.ports.map(port => {
-                      const address = { nodeId: node.id, portId: port.id } as const;
-                      const active = isPortActive(node.id, port.id);
-                      return (
-                        <li key={port.id} className={`port port--${port.direction}${active ? ' port--active' : ''}`}>
-                          {port.direction === 'input' && (
-                            <div
-                              className="port-handle"
-                              data-port-id={port.id}
-                              data-node-id={node.id}
-                              data-port-direction={port.direction}
-                              ref={element => setPortRef(address, element)}
-                              onPointerEnter={event => handlePortEnter(event, node, port)}
-                              onPointerLeave={event => handlePortLeave(event, port)}
-                            />
-                          )}
-                          <div className="port-label">
-                            <code>{port.id}</code>
-                            <span>{port.label ?? port.direction}</span>
-                          </div>
-                          {port.direction === 'output' && (
-                            <div
-                              className="port-handle"
-                              data-port-id={port.id}
-                              data-node-id={node.id}
-                              data-port-direction={port.direction}
-                              ref={element => setPortRef(address, element)}
-                              onPointerDown={event => startDraft(event, node, port)}
-                            />
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              </div>
-            ))}
+              {snapshot.nodes.map(node => (
+                <div
+                  key={node.id}
+                  className={`node${dragging?.id === node.id ? ' dragging' : ''}${focusedNodeId === node.id ? ' focused' : ''}`}
+                  style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)` }}
+                  onPointerDown={event => handleNodePointerDown(event, node)}
+                  onDoubleClick={() => centerOnNode(node)}
+                >
+                  <header>
+                    <span>{node.label}</span>
+                    <button type="button" onClick={() => duplicateNode(node)}>Duplicate</button>
+                  </header>
+                  <section>
+                    <h3>Ports</h3>
+                    <ul className="ports">
+                      {node.ports.map(port => {
+                        const address = { nodeId: node.id, portId: port.id } as const;
+                        const active = isPortActive(node.id, port.id);
+                        return (
+                          <li key={port.id} className={`port port--${port.direction}${active ? ' port--active' : ''}`}>
+                            {port.direction === 'input' && (
+                              <div
+                                className="port-handle"
+                                data-port-id={port.id}
+                                data-node-id={node.id}
+                                data-port-direction={port.direction}
+                                ref={element => setPortRef(address, element)}
+                                onPointerEnter={event => handlePortEnter(event, node, port)}
+                                onPointerLeave={event => handlePortLeave(event, port)}
+                              />
+                            )}
+                            <div className="port-label">
+                              <code>{port.id}</code>
+                              <span>{port.label ?? port.direction}</span>
+                            </div>
+                            {port.direction === 'output' && (
+                              <div
+                                className="port-handle"
+                                data-port-id={port.id}
+                                data-node-id={node.id}
+                                data-port-direction={port.direction}
+                                ref={element => setPortRef(address, element)}
+                                onPointerDown={event => startDraft(event, node, port)}
+                              />
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                </div>
+              ))}
+            </div>
 
             <aside className={`navigator-panel${showNavigator ? ' open' : ''}`}>
               <header>

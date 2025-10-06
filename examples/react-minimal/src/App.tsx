@@ -1,3 +1,13 @@
+  const centerOnNode = useCallback(
+    (node: GraphNode) => {
+      setViewport(prev => ({
+        scale: prev.scale,
+        offsetX: canvasWidth / 2 - (node.position.x + NODE_WIDTH / 2) * prev.scale,
+        offsetY: canvasHeight / 2 - (node.position.y + NODE_HEIGHT / 2) * prev.scale,
+      }));
+    },
+    [canvasHeight, canvasWidth],
+  );
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type {
@@ -430,12 +440,14 @@ const App = (): JSX.Element => {
       if (section.kind === 'nodes') {
         setFocusedNodeId(item.id);
         setSelectedConnectionId(null);
+        const node = snapshot.nodes.find(n => n.id === item.id);
+        if (node) centerOnNode(node);
       }
       if (section.kind === 'connections') {
         setSelectedConnectionId(item.id);
       }
     },
-    [],
+    [canvasHeight, canvasWidth, snapshot.nodes],
   );
 
   return (
@@ -607,6 +619,7 @@ const App = (): JSX.Element => {
                 className={`node${dragging?.id === node.id ? ' dragging' : ''}${focusedNodeId === node.id ? ' focused' : ''}`}
                 style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)` }}
                 onPointerDown={event => handleNodePointerDown(event, node)}
+                onDoubleClick={() => centerOnNode(node)}
               >
                 <header>
                   <span>{node.label}</span>
