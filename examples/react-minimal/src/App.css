@@ -101,16 +101,16 @@
 
 .node {
   position: absolute;
-  width: 180px;
-  height: 100px;
-  background: rgba(15, 23, 42, 0.85);
+  width: 200px;
+  min-height: 140px;
+  background: rgba(15, 23, 42, 0.88);
   border-radius: 1rem;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  padding: 0.75rem 1rem;
+  padding: 0.9rem 1rem;
   box-shadow: 0 20px 30px -18px rgba(15, 23, 42, 0.9);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.6rem;
   backdrop-filter: blur(18px);
   cursor: grab;
   user-select: none;
@@ -139,23 +139,84 @@
   color: #818cf8;
 }
 
-.node section ul {
+.ports {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
 }
 
-.node section li {
-  display: flex;
-  justify-content: space-between;
+.port {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.55rem;
   color: #94a3b8;
 }
 
-.node code {
+.port--input {
+  grid-template-columns: 16px 1fr;
+}
+
+.port--output {
+  grid-template-columns: 1fr 16px;
+  justify-items: end;
+}
+
+.port-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  align-items: flex-start;
+}
+
+.port--output .port-label {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.port-label span {
+  font-size: 0.75rem;
+  color: #cbd5f5;
+}
+
+.port code {
   background: rgba(148, 163, 184, 0.12);
-  padding: 0.15rem 0.35rem;
+  padding: 0.1rem 0.4rem;
   border-radius: 0.5rem;
+  color: #e2e8f0;
+}
+
+.port-handle {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.6);
+  box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.8);
+  cursor: crosshair;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.port--output .port-handle {
+  cursor: pointer;
+  justify-self: end;
+}
+
+.port--input .port-handle {
+  justify-self: start;
+}
+
+.port-handle:hover,
+.port--active .port-handle {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: #38bdf8;
+  transform: scale(1.1);
+}
+
+.edge--draft {
+  stroke-dasharray: 8 6;
+  opacity: 0.9;
 }
