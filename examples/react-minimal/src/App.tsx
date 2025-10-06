@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { FlowGraphState, GraphConnection, GraphNode, GraphPort, PortAddress } from '@flowtomic/flowgraph';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import type {
+  FlowGraphState,
+  GraphConnection,
+  GraphNode,
+  GraphPort,
+  PortAddress,
+} from '@flowtomic/flowgraph';
 import { FlowGraph } from '@flowtomic/flowgraph';
 import './App.css';
 
 type GraphSnapshot = FlowGraphState;
 
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 120;
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 150;
+
+const themes = [
+  { id: 'aurora', label: 'Aurora (default)' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'dawn', label: 'Dawn' },
+];
 
 const ensureDemoGraph = (graph: FlowGraph): void => {
   if (graph.getState().nodes.length > 0) {
@@ -19,13 +31,13 @@ const ensureDemoGraph = (graph: FlowGraph): void => {
       {
         id: 'start',
         label: 'Webhook Trigger',
-        position: { x: 60, y: 160 },
+        position: { x: 60, y: 180 },
         ports: [{ id: 'out', direction: 'output', label: 'next' }],
       },
       {
         id: 'decision',
         label: 'Route Payload',
-        position: { x: 320, y: 120 },
+        position: { x: 360, y: 140 },
         ports: [
           { id: 'in', direction: 'input', label: 'trigger', maxConnections: 1 },
           { id: 'success', direction: 'output', label: 'df++' },
@@ -35,7 +47,7 @@ const ensureDemoGraph = (graph: FlowGraph): void => {
       {
         id: 'dfpp',
         label: 'df++ Execution',
-        position: { x: 580, y: 60 },
+        position: { x: 660, y: 80 },
         ports: [
           { id: 'input', direction: 'input', label: 'payload', maxConnections: 1 },
           { id: 'done', direction: 'output', label: 'result' },
@@ -44,7 +56,7 @@ const ensureDemoGraph = (graph: FlowGraph): void => {
       {
         id: 'log',
         label: 'Log Result',
-        position: { x: 580, y: 260 },
+        position: { x: 660, y: 280 },
         ports: [{ id: 'in', direction: 'input', label: 'entry', maxConnections: 4 }],
       },
     ],
@@ -93,6 +105,13 @@ const App = (): JSX.Element => {
   const [snapshot, setSnapshot] = useState<GraphSnapshot>(() => graph.getState());
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [draft, setDraft] = useState<ConnectionDraft | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<string>('aurora');
+  const [canvasWidth, setCanvasWidth] = useState(1000);
+  const [canvasHeight, setCanvasHeight] = useState(620);
+  const [showGrid, setShowGrid] = useState(true);
+  const [animateConnections, setAnimateConnections] = useState(true);
+
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const portElements = useRef<Map<string, HTMLDivElement | null>>(new Map());
 
@@ -101,6 +120,16 @@ const App = (): JSX.Element => {
     setSnapshot(graph.getState());
     return graph.subscribe(event => setSnapshot(event.state));
   }, [graph]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (selectedConnectionId && !snapshot.connections.some(c => c.id === selectedConnectionId)) {
+      setSelectedConnectionId(null);
+    }
+  }, [snapshot.connections, selectedConnectionId]);
 
   const getPortKey = (address: PortAddress): string => `${address.nodeId}:${address.portId}`;
 
@@ -131,8 +160,8 @@ const App = (): JSX.Element => {
     (id: string) => {
       const node = graph.getNode(id);
       if (!node) return;
-      const dx = Math.round((Math.random() - 0.5) * 120);
-      const dy = Math.round((Math.random() - 0.5) * 80);
+      const dx = Math.round((Math.random() - 0.5) * 140);
+      const dy = Math.round((Math.random() - 0.5) * 90);
       graph.moveNode(id, {
         x: Math.max(20, node.position.x + dx),
         y: Math.max(20, node.position.y + dy),
@@ -144,6 +173,8 @@ const App = (): JSX.Element => {
   const reset = useCallback(() => {
     graph.importState({ nodes: [], connections: [], groups: [] });
     ensureDemoGraph(graph);
+    setSelectedConnectionId(null);
+    setDraft(null);
   }, [graph]);
 
   useEffect(() => {
@@ -202,10 +233,13 @@ const App = (): JSX.Element => {
     const handlePointerUp = (event: PointerEvent) => {
       if (event.pointerId !== draft.pointerId) return;
       setDraft(prev => {
-        if (!prev) return null;
-        if (prev.hoverTarget) {
+        if (prev && prev.hoverTarget) {
           try {
-            graph.addConnection({ source: prev.source, target: prev.hoverTarget });
+            const connection = graph.addConnection({
+              source: prev.source,
+              target: prev.hoverTarget,
+            });
+            setSelectedConnectionId(connection.id);
           } catch (err) {
             console.warn('Failed to add connection', err);
           }
@@ -240,6 +274,7 @@ const App = (): JSX.Element => {
         offsetX,
         offsetY,
       });
+      setSelectedConnectionId(null);
     },
     [],
   );
@@ -261,6 +296,7 @@ const App = (): JSX.Element => {
         },
         hoverTarget: null,
       });
+      setSelectedConnectionId(null);
     },
     [getPortCenter],
   );
@@ -268,13 +304,14 @@ const App = (): JSX.Element => {
   const handlePortEnter = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode, port: GraphPort) => {
       if (!draft || port.direction !== 'input' || event.pointerId !== draft.pointerId) return;
+      if (draft.source.nodeId === node.id && draft.source.portId === port.id) return;
       setDraft(prev => (prev ? { ...prev, hoverTarget: { nodeId: node.id, portId: port.id } } : prev));
     },
     [draft],
   );
 
   const handlePortLeave = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode, port: GraphPort) => {
+    (event: ReactPointerEvent<HTMLDivElement>, port: GraphPort) => {
       if (!draft || port.direction !== 'input' || event.pointerId !== draft.pointerId) return;
       setDraft(prev => (prev ? { ...prev, hoverTarget: null } : prev));
     },
@@ -291,7 +328,7 @@ const App = (): JSX.Element => {
         const targetNode = snapshot.nodes.find(n => n.id === connection.target.nodeId);
         if (!sourceNode || !targetNode) return '';
         const fallbackStart = {
-          x: sourceNode.position.x + (NODE_WIDTH - 16),
+          x: sourceNode.position.x + NODE_WIDTH - 16,
           y: sourceNode.position.y + NODE_HEIGHT / 2,
         };
         const fallbackEnd = {
@@ -320,16 +357,148 @@ const App = (): JSX.Element => {
     [draft],
   );
 
+  const deleteConnection = useCallback(
+    (id: string) => {
+      try {
+        graph.removeConnection(id);
+      } catch (err) {
+        console.warn('Failed to remove connection', err);
+      }
+      setSelectedConnectionId(prev => (prev === id ? null : prev));
+    },
+    [graph],
+  );
+
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDraft(null);
+        setDragging(null);
+        setSelectedConnectionId(null);
+      }
+
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedConnectionId) {
+        event.preventDefault();
+        deleteConnection(selectedConnectionId);
+      }
+    };
+
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, [deleteConnection, selectedConnectionId]);
+
+  const handleConnectionPointerDown = useCallback(
+    (event: ReactPointerEvent<SVGPathElement>, connection: GraphConnection) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedConnectionId(connection.id);
+    },
+    [],
+  );
+
+  const handleConnectionDoubleClick = useCallback(
+    (event: ReactPointerEvent<SVGPathElement>, connection: GraphConnection) => {
+      event.preventDefault();
+      deleteConnection(connection.id);
+    },
+    [deleteConnection],
+  );
+
+  const handleCanvasPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.target === canvasRef.current) {
+      setSelectedConnectionId(null);
+    }
+  }, []);
+
+  const selectedConnection = useMemo(
+    () => snapshot.connections.find(connection => connection.id === selectedConnectionId) ?? null,
+    [selectedConnectionId, snapshot.connections],
+  );
+
+  const canvasStyle = useMemo<CSSProperties>(
+    () => ({
+      width: `${canvasWidth}px`,
+      height: `${canvasHeight}px`,
+    }),
+    [canvasWidth, canvasHeight],
+  );
+
   return (
     <div className="layout">
       <aside className="sidebar">
         <h1>FlowGraph minimal demo</h1>
-        <p>
-          Drag nodes, connect ports, and observe state updates from <code>@flowtomic/flowgraph</code>.
-        </p>
-        <div className="sidebar-controls">
-          <button onClick={reset}>Reset layout</button>
+        <p>Drag nodes, connect ports, and experiment with themes and canvas settings.</p>
+
+        <div className="control-group">
+          <label>
+            Theme
+            <select className="control-select" value={theme} onChange={event => setTheme(event.target.value)}>
+              {themes.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Canvas width
+            <div className="control-row">
+              <input
+                type="range"
+                min={720}
+                max={1280}
+                step={10}
+                value={canvasWidth}
+                onChange={event => setCanvasWidth(Number(event.target.value))}
+              />
+              <span>{canvasWidth}px</span>
+            </div>
+          </label>
+
+          <label>
+            Canvas height
+            <div className="control-row">
+              <input
+                type="range"
+                min={420}
+                max={900}
+                step={10}
+                value={canvasHeight}
+                onChange={event => setCanvasHeight(Number(event.target.value))}
+              />
+              <span>{canvasHeight}px</span>
+            </div>
+          </label>
+
+          <div className="toggle-row">
+            <span>Show grid</span>
+            <input
+              type="checkbox"
+              checked={showGrid}
+              onChange={event => setShowGrid(event.target.checked)}
+            />
+          </div>
+
+          <div className="toggle-row">
+            <span>Animate connections</span>
+            <input
+              type="checkbox"
+              checked={animateConnections}
+              onChange={event => setAnimateConnections(event.target.checked)}
+            />
+          </div>
         </div>
+
+        <div className="settings-divider" />
+
+        <div className="sidebar-controls control-group">
+          <button onClick={reset}>Reset layout</button>
+          {selectedConnection && (
+            <button onClick={() => deleteConnection(selectedConnection.id)}>Delete selected connection</button>
+          )}
+        </div>
+
         <div className="sidebar-list">
           <h2>Nodes</h2>
           <ul>
@@ -341,25 +510,69 @@ const App = (): JSX.Element => {
                     ({Math.round(node.position.x)}, {Math.round(node.position.y)})
                   </div>
                 </div>
-                <button onClick={() => nudgeNode(node.id)}>Move</button>
+                <button onClick={() => nudgeNode(node.id)}>Nudge</button>
               </li>
             ))}
           </ul>
         </div>
+
+        <div className="settings-divider" />
+
+        <section className="connections-panel">
+          <h2>Connections</h2>
+          <ul>
+            {snapshot.connections.map(connection => (
+              <li key={connection.id}>
+                <span>
+                  <code>{connection.source.nodeId}:{connection.source.portId}</code>
+                  <span> → </span>
+                  <code>{connection.target.nodeId}:{connection.target.portId}</code>
+                </span>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    className={selectedConnectionId === connection.id ? 'active' : ''}
+                    onClick={() => setSelectedConnectionId(connection.id)}
+                  >
+                    Select
+                  </button>
+                  <button onClick={() => deleteConnection(connection.id)}>Delete</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       </aside>
 
       <main className="canvas-wrapper">
-        <div className="canvas" ref={canvasRef}>
+        <div
+          className="canvas"
+          ref={canvasRef}
+          data-grid={showGrid ? 'on' : 'off'}
+          style={canvasStyle}
+          onPointerDown={handleCanvasPointerDown}
+        >
           <svg className="edges" width="100%" height="100%">
             <defs>
               <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-                <path d="M2,2 L10,6 L2,10" fill="none" stroke="#38bdf8" strokeWidth="2" />
+                <path d="M2,2 L10,6 L2,10" fill="none" stroke="currentColor" strokeWidth="2" />
               </marker>
             </defs>
             {snapshot.connections.map(connection => {
               const path = getConnectionPath(connection);
               if (!path) return null;
-              return <path key={connection.id} d={path} className="edge" markerEnd="url(#arrow)" />;
+              const classes = ['edge'];
+              if (animateConnections) classes.push('edge--animated');
+              if (selectedConnectionId === connection.id) classes.push('edge--selected');
+              return (
+                <path
+                  key={connection.id}
+                  d={path}
+                  className={classes.join(' ')}
+                  markerEnd="url(#arrow)"
+                  onPointerDown={event => handleConnectionPointerDown(event, connection)}
+                  onDoubleClick={event => handleConnectionDoubleClick(event, connection)}
+                />
+              );
             })}
             {draft
               ? (() => {
@@ -376,9 +589,7 @@ const App = (): JSX.Element => {
             <div
               key={node.id}
               className={`node${dragging?.id === node.id ? ' dragging' : ''}`}
-              style={{
-                transform: `translate(${node.position.x}px, ${node.position.y}px)`
-              }}
+              style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)` }}
               onPointerDown={event => handleNodePointerDown(event, node)}
             >
               <header>
@@ -389,12 +600,9 @@ const App = (): JSX.Element => {
                 <ul className="ports">
                   {node.ports.map(port => {
                     const address = { nodeId: node.id, portId: port.id } as const;
-                    const isActive = isPortActive(node.id, port.id);
+                    const active = isPortActive(node.id, port.id);
                     return (
-                      <li
-                        key={port.id}
-                        className={`port port--${port.direction}${isActive ? ' port--active' : ''}`}
-                      >
+                      <li key={port.id} className={`port port--${port.direction}${active ? ' port--active' : ''}`}>
                         {port.direction === 'input' && (
                           <div
                             className="port-handle"
@@ -403,7 +611,7 @@ const App = (): JSX.Element => {
                             data-port-direction={port.direction}
                             ref={element => setPortRef(address, element)}
                             onPointerEnter={event => handlePortEnter(event, node, port)}
-                            onPointerLeave={event => handlePortLeave(event, node, port)}
+                            onPointerLeave={event => handlePortLeave(event, port)}
                           />
                         )}
                         <div className="port-label">
