@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { FlowGraphState, GraphConnection, GraphNode } from '@flowtomic/flowgraph';
 import { FlowGraph } from '@flowtomic/flowgraph';
 import './App.css';
@@ -83,11 +84,6 @@ const ensureDemoGraph = (graph: FlowGraph): void => {
   });
 };
 
-const getNodeCenter = (node: GraphNode): { x: number; y: number } => ({
-  x: node.position.x + NODE_WIDTH / 2,
-  y: node.position.y + NODE_HEIGHT / 2,
-});
-
 const getConnectionPath = (connection: GraphConnection, nodes: GraphNode[]): string => {
   const source = nodes.find(n => n.id === connection.source.nodeId);
   const target = nodes.find(n => n.id === connection.target.nodeId);
@@ -109,9 +105,18 @@ const getConnectionPath = (connection: GraphConnection, nodes: GraphNode[]): str
   return path;
 };
 
+interface DragState {
+  id: string;
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 const App = (): JSX.Element => {
   const graph = useMemo(() => new FlowGraph(), []);
   const [snapshot, setSnapshot] = useState<GraphSnapshot>(() => graph.getState());
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     ensureDemoGraph(graph);
@@ -137,6 +142,54 @@ const App = (): JSX.Element => {
     graph.importState({ nodes: [], connections: [], groups: [] });
     ensureDemoGraph(graph);
   }, [graph]);
+
+  useEffect(() => {
+    if (!dragging) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragging.pointerId) return;
+      const canvasRect = canvasRef.current?.getBoundingClientRect();
+      if (!canvasRect) return;
+
+      const x = event.clientX - canvasRect.left - dragging.offsetX;
+      const y = event.clientY - canvasRect.top - dragging.offsetY;
+      graph.moveNode(dragging.id, {
+        x: Math.round(Math.max(0, x)),
+        y: Math.round(Math.max(0, y)),
+      });
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId !== dragging.pointerId) return;
+      setDragging(null);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [dragging, graph]);
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode) => {
+      event.preventDefault();
+      const nodeRect = event.currentTarget.getBoundingClientRect();
+      const offsetX = event.clientX - nodeRect.left;
+      const offsetY = event.clientY - nodeRect.top;
+      setDragging({
+        id: node.id,
+        pointerId: event.pointerId,
+        offsetX,
+        offsetY,
+      });
+    },
+    [],
+  );
 
   return (
     <div className="layout">
@@ -165,7 +218,7 @@ const App = (): JSX.Element => {
       </aside>
 
       <main className="canvas-wrapper">
-        <div className="canvas">
+        <div className="canvas" ref={canvasRef}>
           <svg className="edges" width="100%" height="100%">
             <defs>
               <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
@@ -182,10 +235,11 @@ const App = (): JSX.Element => {
           {snapshot.nodes.map(node => (
             <div
               key={node.id}
-              className="node"
+              className={`node${dragging?.id === node.id ? ' dragging' : ''}`}
               style={{
                 transform: `translate(${node.position.x}px, ${node.position.y}px)`
               }}
+              onPointerDown={event => handlePointerDown(event, node)}
             >
               <header>
                 <span>{node.label}</span>

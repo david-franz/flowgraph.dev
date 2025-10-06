@@ -112,6 +112,13 @@
   flex-direction: column;
   gap: 0.4rem;
   backdrop-filter: blur(18px);
+  cursor: grab;
+  user-select: none;
+}
+
+.node.dragging {
+  cursor: grabbing;
+  box-shadow: 0 24px 40px -20px rgba(2, 132, 199, 0.7);
 }
 
 .node header {
