@@ -62,6 +62,7 @@ Three example projects (plus a CLI sample) live under `examples/`. All of them r
 | [`react-demo`](./examples/react-demo) | A feature-focused inspector showing subscription flows, quick actions, and realtime state views. | `cd examples/react-demo && npm install && npm run dev`
 | [`react-minimal`](./examples/react-minimal) | Theme playground with a fully interactive canvas (drag nodes, draft/delete edges), navigation overlay, and canvas controls. | `cd examples/react-minimal && npm install && npm run dev`
 | [`flowtomic-lite`](./examples/flowtomic-lite) | A Flowtomic-inspired builder with node templates, form editing, navigator, and inspector panes—demonstrating separation between library logic and UI implementation. | `cd examples/flowtomic-lite && npm install && npm run dev`
+| [`showcase`](./examples/showcase) | Embeds all demos behind a single tabbed interface for quick comparisons and embedding. | `cd examples/showcase && npm install && npm run dev`
 | [`node-cli`](./examples/node-cli) | Minimal CLI that assembles a workflow and prints a navigator summary—ideal for non-UI integrations. | `cd examples/node-cli && npm install && npm run start`
 
 Each demo includes the standard **FlowGraph Navigator** overlay which can be toggled on/off and keeps track of nodes, connections, and groups for the current graph.

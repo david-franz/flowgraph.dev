@@ -210,6 +210,12 @@ body {
   transition: background 0.2s ease;
 }
 
+.canvas-stage {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 .navigator-toggle {
   position: absolute;
   top: 1rem;
