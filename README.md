@@ -53,21 +53,18 @@ graph.subscribe(event => {
 });
 ```
 
-## React demos
+## Examples
 
-Two Vite playgrounds live under `examples/` and both resolve `@flowtomic/flowgraph` directly to `../src`, so edits to the library hot-reload immediately:
+Three example projects (plus a CLI sample) live under `examples/`. All of them resolve `@flowtomic/flowgraph` directly to `../src`, so edits to the library hot-reload immediately.
 
-- [`react-demo`](./examples/react-demo): feature-focused inspector that lists nodes, connections, and offers quick actions to mutate the graph.
-- [`react-minimal`](./examples/react-minimal): renders the graph as positioned cards with bezier SVG connections for a visual proof-of-concept.
+| Example | Description | Getting started |
+| --- | --- | --- |
+| [`react-demo`](./examples/react-demo) | A feature-focused inspector showing subscription flows, quick actions, and realtime state views. | `cd examples/react-demo && npm install && npm run dev`
+| [`react-minimal`](./examples/react-minimal) | Theme playground with a fully interactive canvas (drag nodes, draft/delete edges), navigation overlay, and canvas controls. | `cd examples/react-minimal && npm install && npm run dev`
+| [`flowtomic-lite`](./examples/flowtomic-lite) | A Flowtomic-inspired builder with node templates, form editing, navigator, and inspector panes—demonstrating separation between library logic and UI implementation. | `cd examples/flowtomic-lite && npm install && npm run dev`
+| [`node-cli`](./examples/node-cli) | Minimal CLI that assembles a workflow and prints a navigator summary—ideal for non-UI integrations. | `cd examples/node-cli && npm install && npm run start`
 
-```bash
-# from the flowgraph/ directory
-cd examples/react-demo   # or examples/react-minimal
-npm install
-npm run dev
-```
-
-The development server renders the current graph state, allows you to add sample nodes, and demonstrates subscriptions to `FlowGraph` change events.
+Each demo includes the standard **FlowGraph Navigator** overlay which can be toggled on/off and keeps track of nodes, connections, and groups for the current graph.
 
 ## Roadmap
 

@@ -210,6 +210,115 @@ body {
   transition: background 0.2s ease;
 }
 
+.navigator-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--control-bg);
+  color: var(--color-body-text);
+  cursor: pointer;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.25);
+  transition: opacity 0.15s ease;
+}
+
+.navigator-toggle:hover {
+  opacity: 0.85;
+}
+.navigator-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 260px;
+  background: rgba(15, 23, 42, 0.72);
+  border-left: 1px solid var(--color-sidebar-border);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  backdrop-filter: blur(16px);
+  transform: translateX(105%);
+  transition: transform 0.25s ease;
+  z-index: 1;
+}
+
+.navigator-panel.open {
+  transform: translateX(0);
+}
+
+.navigator-panel header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--color-subtle-text);
+}
+
+.navigator-panel header strong {
+  color: var(--color-body-text);
+  font-size: 0.95rem;
+}
+
+.navigator-sections {
+  flex: 1;
+  overflow: auto;
+  padding-right: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.navigator-sections section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-subtle-text);
+}
+
+.navigator-sections section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.navigator-sections section li button {
+  width: 100%;
+  border: 1px solid transparent;
+  background: var(--control-bg);
+  color: var(--color-body-text);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.65rem;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.navigator-sections section li button .secondary {
+  color: var(--color-subtle-text);
+  font-size: 0.72rem;
+}
+
+.navigator-sections section li button.active {
+  border-color: var(--color-edge);
+}
+
+.navigator-sections section li button:hover {
+  border-color: var(--color-edge);
+}
+
 .canvas::after {
   content: '';
   position: absolute;
@@ -292,6 +401,11 @@ body {
   cursor: grabbing;
   box-shadow: 0 28px 48px -24px var(--color-edge-shadow);
   border-color: var(--color-edge);
+}
+
+.node.focused {
+  border-color: var(--color-edge-selected);
+  box-shadow: 0 28px 48px -24px var(--color-edge-selected-shadow);
 }
 
 .node header {

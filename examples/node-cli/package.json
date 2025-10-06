@@ -1,0 +1,17 @@
+{
+  "name": "flowgraph-node-cli",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "graph": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@flowtomic/flowgraph": "file:../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.15.7",
+    "typescript": "^5.7.2"
+  }
+}

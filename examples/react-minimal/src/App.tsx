@@ -6,8 +6,10 @@ import type {
   GraphNode,
   GraphPort,
   PortAddress,
+  FlowGraphNavigatorItem,
+  FlowGraphNavigatorSection,
 } from '@flowtomic/flowgraph';
-import { FlowGraph } from '@flowtomic/flowgraph';
+import { FlowGraph, buildNavigatorSummary } from '@flowtomic/flowgraph';
 import './App.css';
 
 type GraphSnapshot = FlowGraphState;
@@ -111,6 +113,8 @@ const App = (): JSX.Element => {
   const [canvasHeight, setCanvasHeight] = useState(620);
   const [showGrid, setShowGrid] = useState(true);
   const [animateConnections, setAnimateConnections] = useState(true);
+  const [showNavigator, setShowNavigator] = useState(true);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const portElements = useRef<Map<string, HTMLDivElement | null>>(new Map());
@@ -130,6 +134,12 @@ const App = (): JSX.Element => {
       setSelectedConnectionId(null);
     }
   }, [snapshot.connections, selectedConnectionId]);
+
+  useEffect(() => {
+    if (focusedNodeId && !snapshot.nodes.some(node => node.id === focusedNodeId)) {
+      setFocusedNodeId(null);
+    }
+  }, [focusedNodeId, snapshot.nodes]);
 
   const getPortKey = (address: PortAddress): string => `${address.nodeId}:${address.portId}`;
 
@@ -275,6 +285,7 @@ const App = (): JSX.Element => {
         offsetY,
       });
       setSelectedConnectionId(null);
+      setFocusedNodeId(node.id);
     },
     [],
   );
@@ -407,6 +418,7 @@ const App = (): JSX.Element => {
   const handleCanvasPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.target === canvasRef.current) {
       setSelectedConnectionId(null);
+      setFocusedNodeId(null);
     }
   }, []);
 
@@ -415,12 +427,31 @@ const App = (): JSX.Element => {
     [selectedConnectionId, snapshot.connections],
   );
 
+  const navigatorSummary = useMemo(() => buildNavigatorSummary(snapshot), [snapshot]);
+
   const canvasStyle = useMemo<CSSProperties>(
     () => ({
       width: `${canvasWidth}px`,
       height: `${canvasHeight}px`,
     }),
     [canvasWidth, canvasHeight],
+  );
+
+  const handleNavigatorItemClick = useCallback(
+    (section: FlowGraphNavigatorSection, item: FlowGraphNavigatorItem) => {
+      if (section.kind === 'nodes') {
+        setFocusedNodeId(item.id);
+        setSelectedConnectionId(null);
+      }
+      if (section.kind === 'connections') {
+        setSelectedConnectionId(item.id);
+      }
+      if (section.kind === 'groups') {
+        setFocusedNodeId(null);
+        setSelectedConnectionId(null);
+      }
+    },
+    [],
   );
 
   return (
@@ -497,6 +528,9 @@ const App = (): JSX.Element => {
           {selectedConnection && (
             <button onClick={() => deleteConnection(selectedConnection.id)}>Delete selected connection</button>
           )}
+          <button onClick={() => setShowNavigator(value => !value)}>
+            {showNavigator ? 'Hide' : 'Show'} navigator
+          </button>
         </div>
 
         <div className="sidebar-list">
@@ -551,6 +585,14 @@ const App = (): JSX.Element => {
           style={canvasStyle}
           onPointerDown={handleCanvasPointerDown}
         >
+          <button
+            className="navigator-toggle"
+            type="button"
+            onClick={() => setShowNavigator(value => !value)}
+          >
+            {showNavigator ? 'Hide navigator' : 'Show navigator'}
+          </button>
+
           <svg className="edges" width="100%" height="100%">
             <defs>
               <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
@@ -585,10 +627,49 @@ const App = (): JSX.Element => {
               : null}
           </svg>
 
+          <aside className={`navigator-panel${showNavigator ? ' open' : ''}`}>
+            <header>
+              <strong>Navigator</strong>
+              <span>
+                {navigatorSummary.totals.nodes} nodes · {navigatorSummary.totals.connections} connections ·{' '}
+                {navigatorSummary.totals.groups} groups
+              </span>
+            </header>
+            <div className="navigator-sections">
+              {navigatorSummary.sections.map(section => (
+                <section key={section.id}>
+                  <h3>{section.label}</h3>
+                  <ul>
+                    {section.items.map(item => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          className={
+                            section.kind === 'connections'
+                              ? selectedConnectionId === item.id
+                                ? 'active'
+                                : ''
+                              : section.kind === 'nodes' && focusedNodeId === item.id
+                                ? 'active'
+                                : ''
+                          }
+                          onClick={() => handleNavigatorItemClick(section, item)}
+                        >
+                          <span className="primary">{item.label}</span>
+                          {item.subtitle ? <span className="secondary">{item.subtitle}</span> : null}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </aside>
+
           {snapshot.nodes.map(node => (
             <div
               key={node.id}
-              className={`node${dragging?.id === node.id ? ' dragging' : ''}`}
+              className={`node${dragging?.id === node.id ? ' dragging' : ''}${focusedNodeId === node.id ? ' focused' : ''}`}
               style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)` }}
               onPointerDown={event => handleNodePointerDown(event, node)}
             >
