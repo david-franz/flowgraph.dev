@@ -226,6 +226,66 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     return cloneConnection(stored);
   }
 
+  updateConnection(id: string, partial: Partial<Omit<GraphConnection, 'id'>>): GraphConnection {
+    const existing = this.getConnectionOrThrow(id);
+    const updated: GraphConnection = cloneConnection({
+      ...existing,
+      ...partial,
+      source: partial.source ? { ...partial.source } : existing.source,
+      target: partial.target ? { ...partial.target } : existing.target,
+      path: partial.path ? partial.path.map(point => ({ ...point })) : existing.path,
+      metadata: partial.metadata ? { ...partial.metadata } : existing.metadata,
+    });
+
+    const sourceNode = this.getNodeOrThrow(updated.source.nodeId);
+    const targetNode = this.getNodeOrThrow(updated.target.nodeId);
+    const sourcePort = this.getPortOrThrow(sourceNode, updated.source.portId);
+    const targetPort = this.getPortOrThrow(targetNode, updated.target.portId);
+
+    if (sourcePort.direction !== 'output') {
+      throw new FlowGraphError(
+        'PORT_DIRECTION_MISMATCH',
+        `Source port "${sourcePort.id}" on node "${sourceNode.id}" is not an output port.`,
+      );
+    }
+    if (targetPort.direction !== 'input') {
+      throw new FlowGraphError(
+        'PORT_DIRECTION_MISMATCH',
+        `Target port "${targetPort.id}" on node "${targetNode.id}" is not an input port.`,
+      );
+    }
+
+    const loopback = updated.source.nodeId === updated.target.nodeId;
+    if (loopback && !((sourcePort.allowLoopback ?? false) || (targetPort.allowLoopback ?? false))) {
+      throw new FlowGraphError(
+        'INVALID_STATE',
+        `Loopback connection on node "${updated.source.nodeId}" requires allowLoopback to be enabled on at least one port.`,
+      );
+    }
+
+    this.assertPortCapacity(updated.source, sourcePort, id);
+    this.assertPortCapacity(updated.target, targetPort, id);
+
+    for (const entry of this.connections.values()) {
+      if (
+        entry.id !== id &&
+        entry.source.nodeId === updated.source.nodeId &&
+        entry.source.portId === updated.source.portId &&
+        entry.target.nodeId === updated.target.nodeId &&
+        entry.target.portId === updated.target.portId
+      ) {
+        throw new FlowGraphError(
+          'CONNECTION_EXISTS',
+          `Connection between ${updated.source.nodeId}:${updated.source.portId} -> ${updated.target.nodeId}:${updated.target.portId} already exists.`,
+        );
+      }
+    }
+
+    this.connections.set(id, updated);
+    this.emit('connection:update', updated);
+    return cloneConnection(updated);
+  }
+
   removeConnection(id: string): void {
     const connection = this.connections.get(id);
     if (!connection) {
@@ -457,11 +517,11 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     }
   }
 
-  private assertPortCapacity(address: PortAddress, port: GraphPort): void {
+  private assertPortCapacity(address: PortAddress, port: GraphPort, excludeConnectionId?: string): void {
     if (port.maxConnections === undefined) {
       return;
     }
-    const used = this.countConnections(address, port.direction);
+    const used = this.countConnections(address, port.direction, excludeConnectionId);
     if (used >= port.maxConnections) {
       throw new FlowGraphError(
         'PORT_CONNECTION_LIMIT',
@@ -470,14 +530,25 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     }
   }
 
-  private countConnections(address: PortAddress, direction: PortDirection): number {
+  private countConnections(address: PortAddress, direction: PortDirection, excludeConnectionId?: string): number {
     let count = 0;
     for (const connection of this.connections.values()) {
+      if (excludeConnectionId && connection.id === excludeConnectionId) {
+        continue;
+      }
       const side = direction === 'output' ? connection.source : connection.target;
       if (side.nodeId === address.nodeId && side.portId === address.portId) {
         count += 1;
       }
     }
     return count;
+  }
+
+  private getConnectionOrThrow(id: string): GraphConnection {
+    const connection = this.connections.get(id);
+    if (!connection) {
+      throw new FlowGraphError('CONNECTION_NOT_FOUND', `Connection with id "${id}" not found.`);
+    }
+    return connection;
   }
 }

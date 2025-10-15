@@ -1,0 +1,77 @@
+.appShell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 2.5rem;
+  background: rgba(11, 17, 32, 0.9);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.navLink {
+  padding: 0.55rem 0.9rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.navLink:hover {
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.activeNavLink {
+  color: var(--text);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.ctaLink {
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: #cbd5f5;
+}
+
+.main {
+  flex: 1;
+  padding: 2.5rem 0 3.5rem;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 2.5rem 2.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.footerLinks {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.footerLinks a:hover {
+  color: var(--text);
+}

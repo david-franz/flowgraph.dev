@@ -64,6 +64,7 @@ Three example projects (plus a CLI sample) live under `examples/`. All of them r
 | [`flowtomic-lite`](./examples/flowtomic-lite) | A Flowtomic-inspired builder with node templates, form editing, navigator, and inspector panes—demonstrating separation between library logic and UI implementation. | `cd examples/flowtomic-lite && npm install && npm run dev`
 | [`showcase`](./examples/showcase) | Embeds all demos behind a single tabbed interface for quick comparisons and embedding. | `cd examples/showcase && npm install && npm run dev`
 | [`node-cli`](./examples/node-cli) | Minimal CLI that assembles a workflow and prints a navigator summary—ideal for non-UI integrations. | `cd examples/node-cli && npm install && npm run start`
+| [`website`](./packages/website) | Public-facing landing/docs/playground site powered by the Flowgraph React bindings. | `cd packages/website && npm install && npm run dev`
 
 Each demo includes the standard **FlowGraph Navigator** overlay which can be toggled on/off and keeps track of nodes, connections, and groups for the current graph.
 

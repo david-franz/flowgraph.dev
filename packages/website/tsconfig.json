@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@flowtomic/flowgraph": ["../../src"],
+      "@flowtomic/flowgraph/*": ["../../src/*"],
+      "@flowtomic/flowgraph-core-view": ["../core-view/src"],
+      "@flowtomic/flowgraph-core-view/*": ["../core-view/src/*"],
+      "@flowtomic/flowgraph-react": ["../react/src"],
+      "@flowtomic/flowgraph-react/*": ["../react/src/*"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  "references": []
+}
