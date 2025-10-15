@@ -172,11 +172,45 @@ interface DragState {
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
+const truncateLabel = (value: string, max: number): string => {
+  if (value.length <= max) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, max - 1))}…`;
+};
+
 interface ConnectionDraft {
   pointerId: number;
   source: PortAddress;
   current: Point;
   target: PortAddress | null;
+}
+
+interface MiniMapNodeDatum {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+  label: string;
+}
+
+interface MiniMapConnectionDatum {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+}
+
+interface MiniMapLabelDatum {
+  id: string;
+  x: number;
+  y: number;
+  label: string;
 }
 
 interface FlowgraphRendererResolvedOptions<TNodeData extends Record<string, unknown>> {
@@ -224,7 +258,9 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   private readonly overlay: Selection<HTMLElement, unknown, null, undefined>;
   private readonly miniMapRoot: Selection<HTMLElement, unknown, null, undefined>;
   private readonly miniMapSvg: Selection<SVGSVGElement, unknown, null, undefined>;
+  private readonly miniMapConnectionsGroup: Selection<SVGGElement, unknown, null, undefined>;
   private readonly miniMapNodesGroup: Selection<SVGGElement, unknown, null, undefined>;
+  private readonly miniMapLabelsGroup: Selection<SVGGElement, unknown, null, undefined>;
   private readonly miniMapViewportRect: Selection<SVGRectElement, unknown, null, undefined>;
   private readonly arrowMarker: Selection<SVGMarkerElement, unknown, null, undefined>;
   private readonly circleMarker: Selection<SVGMarkerElement, unknown, null, undefined>;
@@ -339,7 +375,18 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('viewBox', `0 0 ${this.options.miniMapSize.width} ${this.options.miniMapSize.height}`)
       .style('display', 'block');
 
-    this.miniMapNodesGroup = this.miniMapSvg.append('g').attr('class', 'fg-minimap-nodes');
+    this.miniMapConnectionsGroup = this.miniMapSvg
+      .append('g')
+      .attr('class', 'fg-minimap-connections')
+      .attr('pointer-events', 'none');
+    this.miniMapNodesGroup = this.miniMapSvg
+      .append('g')
+      .attr('class', 'fg-minimap-nodes')
+      .attr('pointer-events', 'none');
+    this.miniMapLabelsGroup = this.miniMapSvg
+      .append('g')
+      .attr('class', 'fg-minimap-labels')
+      .attr('pointer-events', 'none');
     this.miniMapViewportRect = this.miniMapSvg
       .append('rect')
       .attr('class', 'fg-minimap-viewport')
@@ -1346,14 +1393,22 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   }
 
   private updateMiniMap(state: FlowGraphState<TNodeData>): void {
+    const clearMiniMap = () => {
+      this.miniMapConnectionsGroup?.selectAll('*').remove();
+      this.miniMapNodesGroup?.selectAll('*').remove();
+      this.miniMapLabelsGroup?.selectAll('*').remove();
+    };
+
     if (!this.options.showMiniMap) {
+      clearMiniMap();
       this.miniMapRoot.style('display', 'none');
       return;
     }
-    if (!this.miniMapRoot || !this.miniMapNodesGroup) {
+    if (!this.miniMapRoot || !this.miniMapNodesGroup || !this.miniMapConnectionsGroup || !this.miniMapLabelsGroup) {
       return;
     }
     if (!state.nodes.length) {
+      clearMiniMap();
       this.miniMapRoot.style('display', 'none');
       return;
     }
@@ -1378,6 +1433,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     }
 
     if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      clearMiniMap();
       this.miniMapRoot.style('display', 'none');
       return;
     }
@@ -1390,33 +1446,43 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     const scaleY = (mapHeight - padding * 2) / boundsHeight;
     this.miniMapScale = Math.max(0.001, Math.min(scaleX, scaleY));
 
-    const nodesData = state.nodes.map(node => {
+    const nodesData: MiniMapNodeDatum[] = state.nodes.map(node => {
       const width = node.size?.width ?? this.options.nodeSize.width;
       const height = node.size?.height ?? this.options.nodeSize.height;
+      const x = (node.position.x - minX) * this.miniMapScale + padding;
+      const y = (node.position.y - minY) * this.miniMapScale + padding;
+      const scaledWidth = Math.max(2, width * this.miniMapScale);
+      const scaledHeight = Math.max(2, height * this.miniMapScale);
       return {
         id: node.id,
-        x: (node.position.x - minX) * this.miniMapScale + padding,
-        y: (node.position.y - minY) * this.miniMapScale + padding,
-        width: Math.max(2, width * this.miniMapScale),
-        height: Math.max(2, height * this.miniMapScale),
+        x,
+        y,
+        width: scaledWidth,
+        height: scaledHeight,
+        centerX: x + scaledWidth / 2,
+        centerY: y + scaledHeight / 2,
+        label: node.label ?? node.id,
       };
     });
 
-    const selection = this.miniMapNodesGroup
-      .selectAll<SVGRectElement, (typeof nodesData)[number]>('rect')
+    const nodeLookup = new Map(nodesData.map(node => [node.id, node]));
+
+    const nodesSelection = this.miniMapNodesGroup
+      .selectAll<SVGRectElement, MiniMapNodeDatum>('rect.fg-minimap-node')
       .data(nodesData, node => node.id);
 
-    selection.exit().remove();
+    nodesSelection.exit().remove();
 
-    const entered = selection
+    const nodesEntered = nodesSelection
       .enter()
       .append('rect')
+      .attr('class', 'fg-minimap-node')
       .attr('rx', 2)
       .attr('ry', 2)
       .attr('stroke-width', 1);
 
-    const merged = entered.merge(selection as Selection<SVGRectElement, (typeof nodesData)[number]>);
-    merged
+    const nodesMerged = nodesEntered.merge(nodesSelection as Selection<SVGRectElement, MiniMapNodeDatum>);
+    nodesMerged
       .attr('x', node => node.x)
       .attr('y', node => node.y)
       .attr('width', node => node.width)
@@ -1425,6 +1491,80 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('fill-opacity', 0.55)
       .attr('stroke', this.options.theme.nodeStroke)
       .attr('stroke-opacity', 0.7);
+
+    const connectionsData: MiniMapConnectionDatum[] = state.connections
+      .map(connection => {
+        const source = nodeLookup.get(connection.source.nodeId);
+        const target = nodeLookup.get(connection.target.nodeId);
+        if (!source || !target) {
+          return null;
+        }
+        return {
+          id: connection.id,
+          x1: source.centerX,
+          y1: source.centerY,
+          x2: target.centerX,
+          y2: target.centerY,
+          color: connection.color ?? this.options.theme.connection,
+        };
+      })
+      .filter((item): item is MiniMapConnectionDatum => Boolean(item));
+
+    const connectionSelection = this.miniMapConnectionsGroup
+      .selectAll<SVGLineElement, MiniMapConnectionDatum>('line.fg-minimap-connection')
+      .data(connectionsData, connection => connection.id);
+
+    connectionSelection.exit().remove();
+
+    const connectionEntered = connectionSelection
+      .enter()
+      .append('line')
+      .attr('class', 'fg-minimap-connection')
+      .attr('stroke-linecap', 'round');
+
+    const connectionMerged = connectionEntered.merge(
+      connectionSelection as Selection<SVGLineElement, MiniMapConnectionDatum>,
+    );
+    const connectionStrokeWidth = Math.min(1.5, Math.max(0.6, this.miniMapScale * 2));
+    connectionMerged
+      .attr('x1', connection => connection.x1)
+      .attr('y1', connection => connection.y1)
+      .attr('x2', connection => connection.x2)
+      .attr('y2', connection => connection.y2)
+      .attr('stroke', connection => connection.color)
+      .attr('stroke-width', connectionStrokeWidth)
+      .attr('stroke-opacity', 0.8);
+
+    const labelsData: MiniMapLabelDatum[] = nodesData.map(node => ({
+      id: node.id,
+      x: node.centerX,
+      y: node.centerY,
+      label: truncateLabel(node.label, 16),
+    }));
+
+    const labelSelection = this.miniMapLabelsGroup
+      .selectAll<SVGTextElement, MiniMapLabelDatum>('text.fg-minimap-label')
+      .data(labelsData, label => label.id);
+
+    labelSelection.exit().remove();
+
+    const labelsEntered = labelSelection
+      .enter()
+      .append('text')
+      .attr('class', 'fg-minimap-label')
+      .attr('text-anchor', 'middle')
+      .attr('alignment-baseline', 'middle')
+      .attr('font-family', 'inherit');
+
+    const labelsMerged = labelsEntered.merge(labelSelection as Selection<SVGTextElement, MiniMapLabelDatum>);
+    const fontSize = Math.max(6, Math.min(11, this.miniMapScale * 9));
+    labelsMerged
+      .attr('x', label => label.x)
+      .attr('y', label => label.y)
+      .attr('fill', this.options.theme.nodeLabel)
+      .attr('font-size', fontSize)
+      .attr('opacity', 0.85)
+      .text(label => label.label);
 
     this.updateMiniMapViewport();
   }

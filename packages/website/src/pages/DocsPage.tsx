@@ -7,6 +7,7 @@ const quickLinks = [
   { title: 'Node templates', anchor: '#node-templates' },
   { title: 'Connection rules', anchor: '#connection-rules' },
   { title: 'Node forms & IO', anchor: '#node-forms' },
+  { title: 'Template builder', anchor: '#template-builder' },
   { title: 'Renderer options', anchor: '#renderer-options' },
   { title: 'Theme tokens', anchor: '#theme-tokens' },
   { title: 'Navigator helpers', anchor: '#navigator' },
@@ -17,6 +18,60 @@ const quickLinks = [
 ];
 
 const rendererOptionDocs = [
+  {
+    name: 'width',
+    type: 'number',
+    defaultValue: 'undefined',
+    description: 'Fix the SVG canvas width in pixels. When omitted the renderer stretches to its container.',
+  },
+  {
+    name: 'height',
+    type: 'number',
+    defaultValue: 'undefined',
+    description: 'Fix the SVG canvas height in pixels. Defaults to 100% of the host element.',
+  },
+  {
+    name: 'background',
+    type: 'string',
+    defaultValue: 'undefined',
+    description: 'Legacy shortcut that maps to `theme.background`. Prefer supplying a theme override.',
+  },
+  {
+    name: 'nodeSize',
+    type: '{ width: number; height: number }',
+    defaultValue: '{ width: 220, height: 160 }',
+    description: 'Control the default geometry used for layout and connection anchors.',
+  },
+  {
+    name: 'nodeCornerRadius',
+    type: 'number',
+    defaultValue: '16',
+    description: 'Rounded corner radius applied to node rectangles.',
+  },
+  {
+    name: 'portSpacing',
+    type: 'number',
+    defaultValue: '28',
+    description: 'Vertical spacing between consecutive ports of the same direction.',
+  },
+  {
+    name: 'portRegionPadding',
+    type: 'number',
+    defaultValue: '52',
+    description: 'Offset of the first port from the top edge of the node body.',
+  },
+  {
+    name: 'connectionMinControlDistance',
+    type: 'number',
+    defaultValue: '80',
+    description: 'Lower bound applied when bezier curves are auto-routed between ports.',
+  },
+  {
+    name: 'interactive',
+    type: 'boolean',
+    defaultValue: 'true',
+    description: 'Master toggle for pointer interactions. Set to false for a purely observational canvas.',
+  },
   {
     name: 'allowZoom',
     type: 'boolean',
@@ -36,22 +91,10 @@ const rendererOptionDocs = [
     description: 'Permit moving nodes directly in the canvas.',
   },
   {
-    name: 'interactive',
-    type: 'boolean',
-    defaultValue: 'true',
-    description: 'Master toggle for pointer interactions. Set to false for a purely observational canvas.',
-  },
-  {
     name: 'syncViewport',
     type: 'boolean',
     defaultValue: 'true',
     description: 'When false, pan / zoom gestures no longer call FlowGraph.setViewport.',
-  },
-  {
-    name: 'connectionArrow',
-    type: `'arrow' | 'circle' | 'none'`,
-    defaultValue: `'arrow'`,
-    description: 'Choose the marker rendered at the end of each connection.',
   },
   {
     name: 'showGrid',
@@ -90,16 +133,22 @@ const rendererOptionDocs = [
     description: 'Override the minimap footprint for dashboards or embeddable layouts.',
   },
   {
-    name: 'theme',
-    type: 'Partial<FlowgraphRendererTheme>',
-    defaultValue: 'see defaults',
-    description: 'Override colors for nodes, ports, draft edges, selection states, and the minimap.',
+    name: 'connectionArrow',
+    type: `'arrow' | 'circle' | 'none'`,
+    defaultValue: `'arrow'`,
+    description: 'Choose the marker rendered at the end of each connection.',
   },
   {
     name: 'zoomExtent',
     type: '[number, number]',
     defaultValue: '[0.3, 2.5]',
     description: 'Clamp the viewport zoom factor to a custom range.',
+  },
+  {
+    name: 'theme',
+    type: 'Partial<FlowgraphRendererTheme>',
+    defaultValue: 'see defaults',
+    description: 'Override colors for nodes, ports, draft edges, selection states, and the minimap.',
   },
   {
     name: 'validateConnection',
@@ -109,34 +158,40 @@ const rendererOptionDocs = [
       'Custom validation hook executed before creating an edge. Return `false` or a string message to veto the edge.',
   },
   {
-    name: 'nodeSize',
-    type: '{ width: number; height: number }',
-    defaultValue: '{ width: 220, height: 160 }',
-    description: 'Control the default geometry used for layout and connection anchors.',
+    name: 'onNodeSelect',
+    type: '(node) => void',
+    defaultValue: 'undefined',
+    description: 'Receive a callback when a node becomes the active selection.',
   },
   {
-    name: 'portSpacing',
-    type: 'number',
-    defaultValue: '28',
-    description: 'Vertical spacing between consecutive ports of the same direction.',
+    name: 'onConnectionSelect',
+    type: '(connection) => void',
+    defaultValue: 'undefined',
+    description: 'Receive a callback when a connection becomes the active selection.',
   },
   {
-    name: 'portRegionPadding',
-    type: 'number',
-    defaultValue: '52',
-    description: 'Offset of the first port from the top edge of the node body.',
+    name: 'onConnectionCreate',
+    type: '(connection) => void',
+    defaultValue: 'undefined',
+    description: 'Called after a new connection is committed through the renderer UI.',
   },
   {
-    name: 'connectionMinControlDistance',
-    type: 'number',
-    defaultValue: '80',
-    description: 'Lower bound applied when bezier curves are auto-routed between ports.',
+    name: 'onConnectionError',
+    type: '(error) => void',
+    defaultValue: 'undefined',
+    description: 'Surface connection failures, including validation errors, in your own UI.',
   },
   {
     name: 'onViewportChange',
     type: '(viewport) => void',
     defaultValue: 'undefined',
     description: 'Subscribe to pan / zoom changes. Useful for syncing with external UI or persistence.',
+  },
+  {
+    name: 'initialSelection',
+    type: 'FlowgraphRendererSelection | null',
+    defaultValue: 'null',
+    description: 'Provide a node or connection to highlight immediately after the renderer mounts.',
   },
 ];
 
@@ -215,6 +270,10 @@ const DocsPage = (): JSX.Element => (
             palette.
           </li>
           <li>
+            The playground library includes search across labels, categories, and port names so you can jump straight to
+            templates like the Feature Flag Splitter or Batch Exporter.
+          </li>
+          <li>
             Attach <code>template.form</code> to describe inspector controls. Forms are rendered automatically by the
             React bindings and surface in the playground for experimentation.
           </li>
@@ -234,6 +293,16 @@ const DocsPage = (): JSX.Element => (
           why an edge was rejected. The sample playground combines colour checks with a <em>prevent self-connections</em>
           guard, mirroring the APIs you will use in production.
         </p>
+        <ul>
+          <li>
+            The colour palette now covers control, data, vector, text, analytics, and error channels—mix and match them
+            to model domain-specific routing rules.
+          </li>
+          <li>
+            Use “Allow any colours”, “Require matching colours”, or the custom matrix to see how validation feedback is
+            surfaced directly on the canvas.
+          </li>
+        </ul>
       </section>
 
       <section id="node-forms">
@@ -249,6 +318,25 @@ const DocsPage = (): JSX.Element => (
           The playground’s template builder demonstrates this workflow: edit port limits, toggle colour acceptance, and
           hydrate default data with JSON before adding the node to the canvas. Use the same pattern to create guided node
           creation flows in your product.
+        </p>
+      </section>
+
+      <section id="template-builder">
+        <h2>Template builder</h2>
+        <p>
+          The playground now ships with a dedicated builder for experimenting with reusable node templates. Pick any
+          template from the library (HTTP Source, Vector Embedder, Analytics Sink, Feature Flag Splitter, and more), then
+          customise the instance before it hits the graph. You can:
+        </p>
+        <ul>
+          <li>Search the catalog by label, category, or port name to quickly find the template you need.</li>
+          <li>Toggle whether each port accepts any colour or a curated palette, adjust connection limits, and preview the
+            results in the colour-rule matrix instantly.</li>
+          <li>Inject default data with live JSON editing so your spawned nodes already contain sensible inspector values.</li>
+        </ul>
+        <p>
+          These overrides never mutate the underlying template, making it safe to prototype new variations before baking
+          them into your product’s template registry.
         </p>
       </section>
 
@@ -353,15 +441,23 @@ const DocsPage = (): JSX.Element => (
       <section id="playground">
         <h2>Playground</h2>
         <p>
-          The hosted playground is split into a canvas with a live navigator on the right and a settings panel on the
-          far side. Tabs cover <strong>Behavior</strong>, <strong>Canvas</strong>, <strong>Connections</strong>,
+          The hosted playground is split into a controls column on the left and the canvas plus live navigator on the
+          right. Tabs cover <strong>Behavior</strong>, <strong>Canvas</strong>, <strong>Connections</strong>,
           <strong>Layout</strong>, <strong>Theme</strong>, and <strong>Templates</strong>, letting you toggle interaction
-          modes, tune zoom extents, define colour rules, and spawn nodes from reusable templates without leaving the
-          page. A JSON inspector at the bottom mirrors the active graph so you can copy the current state at any time.
+          modes, tune zoom extents, define colour rules, filter the template library, and spawn reusable nodes without
+          leaving the page. Use the <strong>Copy JSON</strong> action whenever you need to export the current graph state.
+        </p>
+        <p>
+          Jump between the five presets—workflow automation, UML collaboration, RAG pipeline, streaming data mesh, and
+          observability map—to see how Flowgraph adapts. Presets tweak canvas dimensions, minimap placement, zoom
+          extents, connection policies, colour rules, and themes so you can explore radically different configurations in
+          seconds.
         </p>
         <p>
           Looking for inspiration? Try the <strong>Aurora</strong> or <strong>Sunrise</strong> themes, enable the minimap,
           and route a few edges through the colour-matrix validator to see how custom policies surface inline errors.
+          The connection panel also ships quick-start buttons for strict matching, type defaults, and control broadcast
+          patterns—ideal when you want to reset the rule matrix without editing each cell.
         </p>
         <p>
           Use the toolbar’s <strong>Undo</strong> / <strong>Redo</strong> controls when iterating on a graph or tweaking

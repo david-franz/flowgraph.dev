@@ -12,34 +12,189 @@ import type {
 import { FlowCanvas, useFlowgraph, type FlowCanvasHandle } from '@flowtomic/flowgraph-react';
 import type {
   FlowgraphConnectionValidator,
+  FlowgraphRenderer,
   FlowgraphRendererOptions,
   FlowgraphRendererSelection,
   FlowgraphRendererTheme,
   FlowgraphRendererViewport,
 } from '@flowtomic/flowgraph-core-view';
 import styles from '../styles/PlaygroundPage.module.css';
+import appStyles from '../styles/App.module.css';
 
 const cloneState = (value: FlowGraphState): FlowGraphState => JSON.parse(JSON.stringify(value));
 
 type MiniMapPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
-const portPalette = {
-  control: '#f97316',
-  data: '#38bdf8',
-  vector: '#22d3ee',
-  text: '#fbbf24',
-  llm: '#a855f7',
-  error: '#f87171',
-} as const;
+const portTypes = [
+  {
+    id: 'control',
+    label: 'Control flow',
+    color: '#f97316',
+    accepts: ['control', 'data', 'error', 'analytics'],
+  },
+  {
+    id: 'data',
+    label: 'Data stream',
+    color: '#38bdf8',
+    accepts: ['data', 'analytics', 'vector', 'llm'],
+  },
+  {
+    id: 'vector',
+    label: 'Vector embedding',
+    color: '#22d3ee',
+    accepts: ['vector', 'llm'],
+  },
+  {
+    id: 'text',
+    label: 'Prompt / text',
+    color: '#fbbf24',
+    accepts: ['text', 'llm'],
+  },
+  {
+    id: 'llm',
+    label: 'LLM output',
+    color: '#a855f7',
+    accepts: ['text', 'analytics', 'llm'],
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics / metrics',
+    color: '#4ade80',
+    accepts: ['analytics', 'data'],
+  },
+  {
+    id: 'error',
+    label: 'Error handling',
+    color: '#f87171',
+    accepts: ['error', 'control'],
+  },
+] as const;
 
-const portLegend = [
-  { id: 'data', label: 'Data stream', color: portPalette.data },
-  { id: 'vector', label: 'Vector embedding', color: portPalette.vector },
-  { id: 'text', label: 'Prompt / text', color: portPalette.text },
-  { id: 'control', label: 'Control flow', color: portPalette.control },
-  { id: 'llm', label: 'LLM output', color: portPalette.llm },
-  { id: 'error', label: 'Error handling', color: portPalette.error },
-];
+type PortTypeId = (typeof portTypes)[number]['id'];
+
+const portPalette: Record<PortTypeId, string> = portTypes.reduce(
+  (acc, type) => {
+    acc[type.id] = type.color;
+    return acc;
+  },
+  {} as Record<PortTypeId, string>,
+);
+
+const portTypeById = new Map(portTypes.map(type => [type.id, type]));
+const portTypeByColor = new Map(portTypes.map(type => [type.color, type]));
+
+const defaultCustomPortColor = '#94a3b8';
+
+const DEFAULT_NODE_WIDTH = 220;
+const DEFAULT_NODE_HEIGHT = 160;
+const DEFAULT_NODE_CORNER_RADIUS = 16;
+const DEFAULT_PORT_SPACING = 28;
+const DEFAULT_PORT_REGION_PADDING = 52;
+const DEFAULT_CONNECTION_MIN_CONTROL_DISTANCE = 80;
+const DEFAULT_GRID_SIZE = 32;
+const DEFAULT_ZOOM_MIN = 0.3;
+const DEFAULT_ZOOM_MAX = 2.5;
+const DEFAULT_MINIMAP_WIDTH = 200;
+const DEFAULT_MINIMAP_HEIGHT = 140;
+
+const THEME_PRESETS: Record<string, FlowgraphRendererTheme> = {
+  midnight: {
+    background: '#0f172a',
+    nodeFill: '#1e293b',
+    nodeStroke: '#334155',
+    nodeLabel: '#e2e8f0',
+    portFill: '#38bdf8',
+    connection: '#38bdf8',
+    connectionSelected: '#facc15',
+    draft: '#475569',
+    miniMapBackground: 'rgba(15, 23, 42, 0.86)',
+  },
+  aurora: {
+    background: '#031022',
+    nodeFill: '#13263b',
+    nodeStroke: '#1f3b5a',
+    nodeLabel: '#dce7ff',
+    portFill: '#6ee7b7',
+    connection: '#34d399',
+    connectionSelected: '#f87171',
+    draft: '#1f2937',
+    miniMapBackground: 'rgba(12, 24, 43, 0.85)',
+  },
+  sunrise: {
+    background: '#1b0f19',
+    nodeFill: '#341b2b',
+    nodeStroke: '#48263a',
+    nodeLabel: '#ffe5f1',
+    portFill: '#f472b6',
+    connection: '#fb7185',
+    connectionSelected: '#facc15',
+    draft: '#c084fc',
+    miniMapBackground: 'rgba(32, 14, 30, 0.88)',
+  },
+  blueprint: {
+    background: '#0b1226',
+    nodeFill: '#142549',
+    nodeStroke: '#1f3a6f',
+    nodeLabel: '#bfdbfe',
+    portFill: '#60a5fa',
+    connection: '#38bdf8',
+    connectionSelected: '#facc15',
+    draft: '#1e3a8a',
+    miniMapBackground: 'rgba(9, 18, 40, 0.85)',
+  },
+  metropolis: {
+    background: '#111827',
+    nodeFill: '#1f2937',
+    nodeStroke: '#374151',
+    nodeLabel: '#f8fafc',
+    portFill: '#f97316',
+    connection: '#f59e0b',
+    connectionSelected: '#34d399',
+    draft: '#64748b',
+    miniMapBackground: 'rgba(17, 24, 39, 0.85)',
+  },
+};
+
+interface PlaygroundPresetSettings {
+  interactive?: boolean;
+  allowZoom?: boolean;
+  allowPan?: boolean;
+  allowNodeDrag?: boolean;
+  syncViewport?: boolean;
+  showNavigator?: boolean;
+  navigatorExpanded?: boolean;
+  showMiniMap?: boolean;
+  miniMapPosition?: MiniMapPosition;
+  miniMapSize?: { width: number; height: number };
+  showGrid?: boolean;
+  snapToGrid?: boolean;
+  gridSize?: number;
+  zoomExtent?: [number, number];
+  nodeWidth?: number;
+  nodeHeight?: number;
+  nodeCornerRadius?: number;
+  portSpacing?: number;
+  portRegionPadding?: number;
+  connectionMinControlDistance?: number;
+  theme?: FlowgraphRendererTheme;
+  connectionArrow?: 'arrow' | 'circle' | 'none';
+  connectionPolicy?: ConnectionPolicy;
+  colorRules?: ColorRules;
+  preventSelfConnections?: boolean;
+  canvasWidth?: number | null;
+  canvasHeight?: number | null;
+  initialSelection?: FlowgraphRendererSelection | null;
+}
+
+interface PlaygroundPreset {
+  id: string;
+  label: string;
+  description: string;
+  state: FlowGraphState;
+  settings: PlaygroundPresetSettings;
+}
+
+const portLegend = portTypes.map(type => ({ id: type.id, label: type.label, color: type.color }));
 
 const colorOptions = portLegend;
 
@@ -65,14 +220,40 @@ const connectionPolicyOptions: Array<{ key: ConnectionPolicy; label: string; des
   },
 ];
 
+const connectionRulePresets = [
+  {
+    id: 'types',
+    label: 'Type defaults',
+    description: 'Reset to the compatibility map derived from IO types.',
+    factory: createDefaultColorRules,
+  },
+  {
+    id: 'strict',
+    label: 'Identical only',
+    description: 'Allow connections only when the types match exactly.',
+    factory: createStrictColorRules,
+  },
+  {
+    id: 'broadcast',
+    label: 'Control broadcast',
+    description: 'Control-flow outputs can target any type; others follow type defaults.',
+    factory: createControlBroadcastRules,
+  },
+] as const;
+
 const colorLabelByValue = Object.fromEntries(colorOptions.map(option => [option.color, option.label]));
 
 const createDefaultColorRules = (): ColorRules => {
   const rules: ColorRules = {};
-  for (const source of colorOptions) {
-    rules[source.color] = {};
-    for (const target of colorOptions) {
-      rules[source.color][target.color] = source.color === target.color;
+  for (const sourceType of portTypes) {
+    const allowedColors = new Set(
+      (sourceType.accepts.length ? sourceType.accepts : [sourceType.id])
+        .map(id => portTypeById.get(id)?.color)
+        .filter((color): color is string => Boolean(color)),
+    );
+    rules[sourceType.color] = {};
+    for (const targetType of portTypes) {
+      rules[sourceType.color][targetType.color] = allowedColors.has(targetType.color);
     }
   }
   return rules;
@@ -80,20 +261,45 @@ const createDefaultColorRules = (): ColorRules => {
 
 const createAllowAllColorRules = (): ColorRules => {
   const rules: ColorRules = {};
-  for (const source of colorOptions) {
-    rules[source.color] = {};
-    for (const target of colorOptions) {
-      rules[source.color][target.color] = true;
+  for (const sourceType of portTypes) {
+    rules[sourceType.color] = {};
+    for (const targetType of portTypes) {
+      rules[sourceType.color][targetType.color] = true;
     }
   }
   return rules;
 };
 
+const createStrictColorRules = (): ColorRules => {
+  const rules: ColorRules = {};
+  for (const sourceType of portTypes) {
+    rules[sourceType.color] = {};
+    for (const targetType of portTypes) {
+      rules[sourceType.color][targetType.color] = sourceType.color === targetType.color;
+    }
+  }
+  return rules;
+};
+
+const createControlBroadcastRules = (): ColorRules => {
+  const rules = createDefaultColorRules();
+  const controlColor = portPalette.control;
+  for (const targetType of portTypes) {
+    rules[controlColor][targetType.color] = true;
+    if (targetType.id !== 'error') {
+      rules[targetType.color][controlColor] = true;
+    }
+  }
+  return rules;
+};
+
+const cloneColorRules = (rules: ColorRules): ColorRules => JSON.parse(JSON.stringify(rules));
+
 const describeColor = (value: string | null | undefined): string => {
   if (!value) {
     return 'uncoloured';
   }
-  return colorLabelByValue[value] ?? value;
+  return colorLabelByValue[value] ?? `Custom (${value})`;
 };
 
 interface TemplatePortDraft {
@@ -101,23 +307,34 @@ interface TemplatePortDraft {
   label?: string;
   direction: 'input' | 'output';
   color?: string;
+  typeId: PortTypeId | 'custom';
   maxConnections: number | null;
   acceptsColors: string[];
   allowAny: boolean;
 }
 
 const buildPortDrafts = (template: GraphNodeTemplate<Record<string, unknown>>): TemplatePortDraft[] =>
-  template.ports.map(port => ({
-    id: port.id,
-    label: port.label,
-    direction: port.direction,
-    color: port.color,
-    maxConnections: port.maxConnections ?? null,
-    acceptsColors: port.acceptsColors ? [...port.acceptsColors] : [],
-    allowAny: !port.acceptsColors || port.acceptsColors.length === 0,
-  }));
+  template.ports.map(port => {
+    const type = port.color ? portTypeByColor.get(port.color) : undefined;
+    const derivedAccepts = type
+      ? type.accepts
+          .map(id => portTypeById.get(id)?.color)
+          .filter((color): color is string => Boolean(color))
+      : [];
+    const accepts = port.acceptsColors ? [...port.acceptsColors] : derivedAccepts;
+    return {
+      id: port.id,
+      label: port.label,
+      direction: port.direction,
+      color: port.color ?? defaultCustomPortColor,
+      typeId: port.color ? portTypeByColor.get(port.color)?.id ?? 'custom' : 'custom',
+      maxConnections: port.maxConnections ?? null,
+      acceptsColors: accepts,
+      allowAny: accepts.length === 0,
+    };
+  });
 
-const templateCategoryOrder = ['Integrations', 'Processing', 'AI', 'Utilities', 'General'] as const;
+const templateCategoryOrder = ['Integrations', 'Processing', 'AI', 'Operations', 'Utilities', 'General'] as const;
 
 const nodeTemplateCatalog: GraphNodeTemplate[] = [
   {
@@ -344,283 +561,904 @@ const nodeTemplateCatalog: GraphNodeTemplate[] = [
       },
     },
   },
+  {
+    id: 'analytics-sink',
+    label: 'Analytics Sink',
+    description: 'Buffer metrics and forward them to a warehouse.',
+    category: 'Utilities',
+    ports: [
+      {
+        id: 'events',
+        direction: 'input',
+        label: 'Events',
+        color: portPalette.analytics,
+        acceptsColors: [portPalette.analytics, portPalette.data],
+        maxConnections: 4,
+      },
+      {
+        id: 'alerts',
+        direction: 'output',
+        label: 'Alerts',
+        color: portPalette.error,
+      },
+    ],
+    form: {
+      sections: [
+        {
+          id: 'destination',
+          title: 'Destination',
+          fields: [
+            {
+              id: 'warehouse',
+              label: 'Warehouse',
+              kind: 'select',
+              options: [
+                { value: 'bigquery', label: 'BigQuery' },
+                { value: 'snowflake', label: 'Snowflake' },
+                { value: 'databricks', label: 'Databricks' },
+              ],
+              defaultValue: 'bigquery',
+            },
+            {
+              id: 'table',
+              label: 'Table name',
+              kind: 'text',
+              placeholder: 'events.session_metrics',
+              required: true,
+            },
+            {
+              id: 'retention',
+              label: 'Retention (days)',
+              kind: 'number',
+              defaultValue: 30,
+            },
+          ],
+        },
+      ],
+    },
+    defaults: {
+      metadata: { icon: 'chart-bar' },
+      data: {
+        warehouse: 'bigquery',
+        table: 'events.session_metrics',
+        retention: 30,
+      },
+      size: { width: 260, height: 210 },
+    },
+  },
+  {
+    id: 'anomaly-detector',
+    label: 'Anomaly Detector',
+    description: 'Monitor streaming metrics and emit control signals when breaches occur.',
+    category: 'Operations',
+    ports: [
+      {
+        id: 'metrics',
+        direction: 'input',
+        label: 'Metrics',
+        color: portPalette.analytics,
+        acceptsColors: [portPalette.analytics, portPalette.data],
+        maxConnections: 3,
+      },
+      {
+        id: 'thresholds',
+        direction: 'input',
+        label: 'Threshold overrides',
+        color: portPalette.control,
+        acceptsColors: [portPalette.control],
+        maxConnections: 1,
+      },
+      { id: 'alerts', direction: 'output', label: 'Alerts', color: portPalette.control },
+      { id: 'annotations', direction: 'output', label: 'Annotations', color: portPalette.text },
+    ],
+    form: {
+      sections: [
+        {
+          id: 'strategy',
+          title: 'Detection strategy',
+          fields: [
+            {
+              id: 'window',
+              label: 'Window (minutes)',
+              kind: 'number',
+              defaultValue: 5,
+              description: 'Sliding window size used for z-score evaluation.',
+            },
+            {
+              id: 'sensitivity',
+              label: 'Sensitivity',
+              kind: 'select',
+              options: [
+                { value: 'conservative', label: 'Conservative' },
+                { value: 'balanced', label: 'Balanced' },
+                { value: 'aggressive', label: 'Aggressive' },
+              ],
+              defaultValue: 'balanced',
+            },
+            {
+              id: 'autoTune',
+              label: 'Auto tune thresholds',
+              kind: 'checkbox',
+              defaultValue: true,
+            },
+            {
+              id: 'notifyChannels',
+              label: 'Notify channels',
+              kind: 'json',
+              defaultValue: ['#ops-alerts'],
+            },
+          ],
+        },
+      ],
+    },
+    defaults: {
+      metadata: { icon: 'activity' },
+      data: {
+        window: 5,
+        sensitivity: 'balanced',
+        autoTune: true,
+        notifyChannels: ['#ops-alerts'],
+      },
+      size: { width: 280, height: 235 },
+    },
+  },
+  {
+    id: 'feature-flag',
+    label: 'Feature Flag Splitter',
+    description: 'Route traffic by feature flag state.',
+    category: 'Utilities',
+    ports: [
+      {
+        id: 'traffic',
+        direction: 'input',
+        label: 'Traffic',
+        color: portPalette.control,
+        acceptsColors: [portPalette.control],
+        maxConnections: 2,
+      },
+      { id: 'enabled', direction: 'output', label: 'Enabled', color: portPalette.data },
+      { id: 'disabled', direction: 'output', label: 'Disabled', color: portPalette.error },
+    ],
+    form: {
+      sections: [
+        {
+          id: 'flag',
+          title: 'Flag targeting',
+          fields: [
+            {
+              id: 'flagKey',
+              label: 'Flag key',
+              kind: 'text',
+              placeholder: 'checkout.new-flow',
+              required: true,
+            },
+            {
+              id: 'rollout',
+              label: 'Rollout %',
+              kind: 'number',
+              defaultValue: 50,
+            },
+            {
+              id: 'audience',
+              label: 'Audience',
+              kind: 'textarea',
+              placeholder: 'geo == "US" && plan == "enterprise"',
+            },
+          ],
+        },
+      ],
+    },
+    defaults: {
+      metadata: { icon: 'adjustments' },
+      data: {
+        flagKey: 'checkout.new-flow',
+        rollout: 50,
+        audience: '',
+      },
+      size: { width: 250, height: 210 },
+    },
+  },
+  {
+    id: 'batch-exporter',
+    label: 'Batch Exporter',
+    description: 'Schedule large exports to downstream systems.',
+    category: 'Processing',
+    ports: [
+      {
+        id: 'input',
+        direction: 'input',
+        label: 'Dataset',
+        color: portPalette.analytics,
+        acceptsColors: [portPalette.analytics, portPalette.data],
+      },
+      {
+        id: 'schedule',
+        direction: 'input',
+        label: 'Schedule',
+        color: portPalette.control,
+        acceptsColors: [portPalette.control],
+        maxConnections: 1,
+      },
+      {
+        id: 'output',
+        direction: 'output',
+        label: 'Dispatch',
+        color: portPalette.control,
+      },
+    ],
+    form: {
+      sections: [
+        {
+          id: 'export',
+          title: 'Export configuration',
+          fields: [
+            {
+              id: 'format',
+              label: 'Format',
+              kind: 'select',
+              options: [
+                { value: 'parquet', label: 'Parquet' },
+                { value: 'csv', label: 'CSV' },
+                { value: 'jsonl', label: 'JSONL' },
+              ],
+              defaultValue: 'parquet',
+            },
+            {
+              id: 'compression',
+              label: 'Compression',
+              kind: 'select',
+              options: [
+                { value: 'snappy', label: 'Snappy' },
+                { value: 'gzip', label: 'Gzip' },
+                { value: 'none', label: 'None' },
+              ],
+              defaultValue: 'snappy',
+            },
+            {
+              id: 'destination',
+              label: 'Destination URI',
+              kind: 'text',
+              placeholder: 's3://exports/batch/',
+              required: true,
+            },
+          ],
+        },
+      ],
+    },
+    defaults: {
+      metadata: { icon: 'cloud-upload' },
+      data: {
+        format: 'parquet',
+        compression: 'snappy',
+        destination: 's3://exports/batch/',
+      },
+      size: { width: 280, height: 230 },
+    },
+  },
 ];
 
-const graphPresets: Record<string, FlowGraphState> = {
-  workflow: {
-    nodes: [
-      {
-        id: 'start',
-        label: 'Webhook Trigger',
-        position: { x: 120, y: 160 },
-        ports: [{ id: 'out', direction: 'output', label: 'next', color: portPalette.control }],
-      },
-      {
-        id: 'router',
-        label: 'Branch Logic',
-        position: { x: 420, y: 120 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'entry',
-            maxConnections: 1,
-            color: portPalette.control,
-            acceptsColors: [portPalette.control],
-          },
-          { id: 'success', direction: 'output', label: 'continue', color: portPalette.data },
-          { id: 'fallback', direction: 'output', label: 'fallback', color: portPalette.error },
-        ],
-      },
-      {
-        id: 'notify',
-        label: 'Notify Customer',
-        position: { x: 700, y: 80 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'payload',
-            maxConnections: 1,
-            color: portPalette.data,
-            acceptsColors: [portPalette.data],
-          },
-          { id: 'done', direction: 'output', label: 'done', color: portPalette.control },
-        ],
-      },
-      {
-        id: 'log',
-        label: 'Log Error',
-        position: { x: 700, y: 240 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'failure',
-            maxConnections: 4,
-            color: portPalette.data,
-            acceptsColors: [portPalette.data, portPalette.error, portPalette.control],
-          },
-        ],
-      },
-    ],
-    connections: [
-      { id: 'edge-1', source: { nodeId: 'start', portId: 'out' }, target: { nodeId: 'router', portId: 'in' } },
-      { id: 'edge-2', source: { nodeId: 'router', portId: 'success' }, target: { nodeId: 'notify', portId: 'in' } },
-      { id: 'edge-3', source: { nodeId: 'router', portId: 'fallback' }, target: { nodeId: 'log', portId: 'in' } },
-      { id: 'edge-4', source: { nodeId: 'notify', portId: 'done' }, target: { nodeId: 'log', portId: 'in' } },
-    ],
-    groups: [],
+const playgroundPresets: PlaygroundPreset[] = [
+  {
+    id: 'workflow',
+    label: 'Workflow automation',
+    description: 'Branching lifecycle with customer notifications and error handling.',
+    state: {
+      nodes: [
+        {
+          id: 'start',
+          label: 'Webhook Trigger',
+          position: { x: 120, y: 160 },
+          ports: [{ id: 'out', direction: 'output', label: 'next', color: portPalette.control }],
+        },
+        {
+          id: 'router',
+          label: 'Branch Logic',
+          position: { x: 420, y: 120 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'entry',
+              maxConnections: 1,
+              color: portPalette.control,
+              acceptsColors: [portPalette.control],
+            },
+            { id: 'success', direction: 'output', label: 'continue', color: portPalette.data },
+            { id: 'fallback', direction: 'output', label: 'fallback', color: portPalette.error },
+          ],
+        },
+        {
+          id: 'notify',
+          label: 'Notify Customer',
+          position: { x: 700, y: 80 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'payload',
+              maxConnections: 1,
+              color: portPalette.data,
+              acceptsColors: [portPalette.data],
+            },
+            { id: 'done', direction: 'output', label: 'done', color: portPalette.control },
+          ],
+        },
+        {
+          id: 'log',
+          label: 'Log Error',
+          position: { x: 700, y: 240 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'failure',
+              maxConnections: 4,
+              color: portPalette.data,
+              acceptsColors: [portPalette.data, portPalette.error, portPalette.control],
+            },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'edge-1', source: { nodeId: 'start', portId: 'out' }, target: { nodeId: 'router', portId: 'in' } },
+        { id: 'edge-2', source: { nodeId: 'router', portId: 'success' }, target: { nodeId: 'notify', portId: 'in' } },
+        { id: 'edge-3', source: { nodeId: 'router', portId: 'fallback' }, target: { nodeId: 'log', portId: 'in' } },
+        { id: 'edge-4', source: { nodeId: 'notify', portId: 'done' }, target: { nodeId: 'log', portId: 'in' } },
+      ],
+      groups: [],
+    },
+    settings: {
+      interactive: true,
+      allowZoom: true,
+      allowPan: true,
+      allowNodeDrag: true,
+      syncViewport: true,
+      showNavigator: true,
+      navigatorExpanded: true,
+      showMiniMap: true,
+      miniMapPosition: 'top-right',
+      miniMapSize: { width: DEFAULT_MINIMAP_WIDTH, height: DEFAULT_MINIMAP_HEIGHT },
+      showGrid: false,
+      snapToGrid: false,
+      gridSize: DEFAULT_GRID_SIZE,
+      zoomExtent: [DEFAULT_ZOOM_MIN, DEFAULT_ZOOM_MAX],
+      nodeWidth: DEFAULT_NODE_WIDTH,
+      nodeHeight: DEFAULT_NODE_HEIGHT,
+      nodeCornerRadius: DEFAULT_NODE_CORNER_RADIUS,
+      portSpacing: DEFAULT_PORT_SPACING,
+      portRegionPadding: DEFAULT_PORT_REGION_PADDING,
+      connectionMinControlDistance: DEFAULT_CONNECTION_MIN_CONTROL_DISTANCE,
+      connectionArrow: 'arrow',
+      theme: THEME_PRESETS.midnight,
+      connectionPolicy: 'match',
+      colorRules: createDefaultColorRules(),
+      preventSelfConnections: true,
+      initialSelection: { nodeId: 'start', connectionId: null },
+    },
   },
-  uml: {
-    nodes: [
-      {
-        id: 'user',
-        label: 'User',
-        position: { x: 120, y: 160 },
-        ports: [{ id: 'association', direction: 'output', label: 'association', color: portPalette.control }],
-        metadata: { stereotype: 'actor' },
-      },
-      {
-        id: 'login',
-        label: 'LoginService',
-        position: { x: 400, y: 110 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'uses',
-            color: portPalette.control,
-            acceptsColors: [portPalette.control],
-          },
-          { id: 'out', direction: 'output', label: 'calls', color: portPalette.control },
-        ],
-      },
-      {
-        id: 'db',
-        label: 'AuthStore',
-        position: { x: 640, y: 160 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'queries',
-            color: portPalette.control,
-            acceptsColors: [portPalette.control],
-          },
-        ],
-      },
-    ],
-    connections: [
-      { id: 'uml-1', source: { nodeId: 'user', portId: 'association' }, target: { nodeId: 'login', portId: 'in' } },
-      { id: 'uml-2', source: { nodeId: 'login', portId: 'out' }, target: { nodeId: 'db', portId: 'in' } },
-    ],
-    groups: [],
+  {
+    id: 'uml',
+    label: 'UML collaboration',
+    description: 'Static service collaboration diagram with a fixed canvas.',
+    state: {
+      nodes: [
+        {
+          id: 'user',
+          label: 'User',
+          position: { x: 120, y: 160 },
+          ports: [{ id: 'association', direction: 'output', label: 'association', color: portPalette.control }],
+          metadata: { stereotype: 'actor' },
+        },
+        {
+          id: 'login',
+          label: 'LoginService',
+          position: { x: 400, y: 110 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'uses',
+              color: portPalette.control,
+              acceptsColors: [portPalette.control],
+            },
+            { id: 'out', direction: 'output', label: 'calls', color: portPalette.control },
+          ],
+        },
+        {
+          id: 'db',
+          label: 'AuthStore',
+          position: { x: 640, y: 160 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'queries',
+              color: portPalette.control,
+              acceptsColors: [portPalette.control],
+            },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'uml-1', source: { nodeId: 'user', portId: 'association' }, target: { nodeId: 'login', portId: 'in' } },
+        { id: 'uml-2', source: { nodeId: 'login', portId: 'out' }, target: { nodeId: 'db', portId: 'in' } },
+      ],
+      groups: [],
+    },
+    settings: {
+      interactive: false,
+      allowZoom: false,
+      allowPan: false,
+      allowNodeDrag: false,
+      syncViewport: true,
+      showNavigator: false,
+      showMiniMap: false,
+      showGrid: true,
+      snapToGrid: false,
+      gridSize: 48,
+      zoomExtent: [0.8, 1.2],
+      nodeWidth: 200,
+      nodeHeight: 140,
+      nodeCornerRadius: 6,
+      portSpacing: 32,
+      portRegionPadding: 48,
+      connectionMinControlDistance: 96,
+      connectionArrow: 'none',
+      theme: THEME_PRESETS.blueprint,
+      connectionPolicy: 'rules',
+      colorRules: createStrictColorRules(),
+      preventSelfConnections: true,
+      canvasWidth: 960,
+      canvasHeight: 540,
+      initialSelection: { nodeId: 'login', connectionId: 'uml-1' },
+    },
   },
-  rag: {
-    nodes: [
-      {
-        id: 'retriever',
-        label: 'Vector Retriever',
-        position: { x: 140, y: 140 },
-        ports: [
-          {
-            id: 'input',
-            direction: 'input',
-            label: 'query',
-            maxConnections: 1,
-            color: portPalette.text,
-            acceptsColors: [portPalette.text],
-          },
-          { id: 'docs', direction: 'output', label: 'documents', color: portPalette.data },
-        ],
-      },
-      {
-        id: 'ranker',
-        label: 'Semantic Ranker',
-        position: { x: 440, y: 200 },
-        ports: [
-          {
-            id: 'in',
-            direction: 'input',
-            label: 'documents',
-            maxConnections: 1,
-            color: portPalette.data,
-            acceptsColors: [portPalette.data],
-          },
-          { id: 'out', direction: 'output', label: 'top-k', color: portPalette.vector },
-        ],
-      },
-      {
-        id: 'llm',
-        label: 'LLM Generator',
-        position: { x: 720, y: 160 },
-        ports: [
-          {
-            id: 'prompt',
-            direction: 'input',
-            label: 'prompt',
-            maxConnections: 1,
-            color: portPalette.text,
-            acceptsColors: [portPalette.text],
-          },
-          {
-            id: 'response',
-            direction: 'output',
-            label: 'answer',
-            color: portPalette.text,
-          },
-        ],
-      },
-      {
-        id: 'eval',
-        label: 'Evaluator',
-        position: { x: 960, y: 200 },
-        ports: [
-          {
-            id: 'input',
-            direction: 'input',
-            label: 'answer',
-            maxConnections: 1,
-            color: portPalette.text,
-            acceptsColors: [portPalette.text],
-          },
-        ],
-      },
-    ],
-    connections: [
-      { id: 'rag-1', source: { nodeId: 'retriever', portId: 'docs' }, target: { nodeId: 'ranker', portId: 'in' } },
-      { id: 'rag-2', source: { nodeId: 'ranker', portId: 'out' }, target: { nodeId: 'llm', portId: 'prompt' } },
-      { id: 'rag-3', source: { nodeId: 'llm', portId: 'response' }, target: { nodeId: 'eval', portId: 'input' } },
-    ],
-    groups: [],
+  {
+    id: 'rag',
+    label: 'RAG pipeline',
+    description: 'Retriever → ranker → generator pipeline with evaluation.',
+    state: {
+      nodes: [
+        {
+          id: 'retriever',
+          label: 'Vector Retriever',
+          position: { x: 140, y: 140 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'query',
+              maxConnections: 1,
+              color: portPalette.text,
+              acceptsColors: [portPalette.text],
+            },
+            { id: 'docs', direction: 'output', label: 'documents', color: portPalette.data },
+          ],
+        },
+        {
+          id: 'ranker',
+          label: 'Semantic Ranker',
+          position: { x: 440, y: 200 },
+          ports: [
+            {
+              id: 'in',
+              direction: 'input',
+              label: 'documents',
+              maxConnections: 1,
+              color: portPalette.data,
+              acceptsColors: [portPalette.data],
+            },
+            { id: 'out', direction: 'output', label: 'top-k', color: portPalette.vector },
+          ],
+        },
+        {
+          id: 'llm',
+          label: 'LLM Generator',
+          position: { x: 720, y: 160 },
+          ports: [
+            {
+              id: 'prompt',
+              direction: 'input',
+              label: 'prompt',
+              maxConnections: 1,
+              color: portPalette.text,
+              acceptsColors: [portPalette.text],
+            },
+            {
+              id: 'response',
+              direction: 'output',
+              label: 'answer',
+              color: portPalette.text,
+            },
+          ],
+        },
+        {
+          id: 'eval',
+          label: 'Evaluator',
+          position: { x: 960, y: 200 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'answer',
+              maxConnections: 1,
+              color: portPalette.text,
+              acceptsColors: [portPalette.text],
+            },
+            { id: 'metrics', direction: 'output', label: 'metrics', color: portPalette.analytics },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'rag-1', source: { nodeId: 'retriever', portId: 'docs' }, target: { nodeId: 'ranker', portId: 'in' } },
+        { id: 'rag-2', source: { nodeId: 'ranker', portId: 'out' }, target: { nodeId: 'llm', portId: 'prompt' } },
+        { id: 'rag-3', source: { nodeId: 'llm', portId: 'response' }, target: { nodeId: 'eval', portId: 'input' } },
+      ],
+      groups: [],
+    },
+    settings: {
+      interactive: true,
+      allowZoom: true,
+      allowPan: true,
+      allowNodeDrag: true,
+      syncViewport: true,
+      showNavigator: true,
+      navigatorExpanded: true,
+      showMiniMap: true,
+      miniMapPosition: 'bottom-right',
+      miniMapSize: { width: 220, height: 160 },
+      showGrid: false,
+      snapToGrid: false,
+      gridSize: DEFAULT_GRID_SIZE,
+      zoomExtent: [0.25, 1.8],
+      nodeWidth: 240,
+      nodeHeight: 180,
+      nodeCornerRadius: 20,
+      portSpacing: 32,
+      portRegionPadding: 56,
+      connectionMinControlDistance: 120,
+      connectionArrow: 'arrow',
+      theme: THEME_PRESETS.sunrise,
+      connectionPolicy: 'match',
+      colorRules: createDefaultColorRules(),
+      preventSelfConnections: true,
+      initialSelection: { nodeId: 'retriever', connectionId: null },
+    },
   },
-};
+  {
+    id: 'streaming',
+    label: 'Streaming data mesh',
+    description: 'Real-time event fan-out with anomaly detection and archival.',
+    state: {
+      nodes: [
+        {
+          id: 'gateway',
+          label: 'Event Gateway',
+          position: { x: 100, y: 120 },
+          ports: [
+            { id: 'sources', direction: 'input', label: 'sources', color: portPalette.control, acceptsColors: [portPalette.control] },
+            { id: 'events', direction: 'output', label: 'events', color: portPalette.data },
+            { id: 'telemetry', direction: 'output', label: 'metrics', color: portPalette.analytics },
+          ],
+        },
+        {
+          id: 'stream',
+          label: 'Stream Processor',
+          position: { x: 360, y: 160 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'events',
+              color: portPalette.data,
+              acceptsColors: [portPalette.data, portPalette.control],
+            },
+            { id: 'vectors', direction: 'output', label: 'vectors', color: portPalette.vector },
+            { id: 'aggregates', direction: 'output', label: 'aggregates', color: portPalette.analytics },
+          ],
+        },
+        {
+          id: 'detector',
+          label: 'Anomaly Detector',
+          position: { x: 620, y: 80 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'vectors',
+              maxConnections: 2,
+              color: portPalette.vector,
+              acceptsColors: [portPalette.vector],
+            },
+            { id: 'alerts', direction: 'output', label: 'alerts', color: portPalette.control },
+          ],
+        },
+        {
+          id: 'lake',
+          label: 'Cold Storage',
+          position: { x: 620, y: 220 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'aggregates',
+              color: portPalette.analytics,
+              acceptsColors: [portPalette.analytics, portPalette.data],
+            },
+            { id: 'archive', direction: 'output', label: 'archive', color: portPalette.data },
+          ],
+        },
+        {
+          id: 'notifier',
+          label: 'Ops Notifier',
+          position: { x: 880, y: 60 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'alerts',
+              color: portPalette.control,
+              acceptsColors: [portPalette.control],
+            },
+            { id: 'summary', direction: 'output', label: 'summary', color: portPalette.analytics },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'stream-1', source: { nodeId: 'gateway', portId: 'events' }, target: { nodeId: 'stream', portId: 'input' } },
+        { id: 'stream-2', source: { nodeId: 'stream', portId: 'vectors' }, target: { nodeId: 'detector', portId: 'input' } },
+        { id: 'stream-3', source: { nodeId: 'stream', portId: 'aggregates' }, target: { nodeId: 'lake', portId: 'input' } },
+        { id: 'stream-4', source: { nodeId: 'detector', portId: 'alerts' }, target: { nodeId: 'notifier', portId: 'input' } },
+        { id: 'stream-5', source: { nodeId: 'gateway', portId: 'telemetry' }, target: { nodeId: 'lake', portId: 'input' } },
+      ],
+      groups: [],
+    },
+    settings: {
+      interactive: true,
+      allowZoom: true,
+      allowPan: true,
+      allowNodeDrag: true,
+      syncViewport: true,
+      showNavigator: true,
+      navigatorExpanded: true,
+      showMiniMap: true,
+      miniMapPosition: 'top-left',
+      miniMapSize: { width: 240, height: 168 },
+      showGrid: true,
+      snapToGrid: true,
+      gridSize: 56,
+      zoomExtent: [0.35, 2.6],
+      nodeWidth: 240,
+      nodeHeight: 190,
+      nodeCornerRadius: 18,
+      portSpacing: 32,
+      portRegionPadding: 54,
+      connectionMinControlDistance: 140,
+      connectionArrow: 'circle',
+      theme: THEME_PRESETS.aurora,
+      connectionPolicy: 'rules',
+      colorRules: createControlBroadcastRules(),
+      preventSelfConnections: false,
+      initialSelection: { nodeId: 'stream', connectionId: null },
+    },
+  },
+  {
+    id: 'observability',
+    label: 'Observability map',
+    description: 'Analytics-heavy observability flow with dedicated sinks.',
+    state: {
+      nodes: [
+        {
+          id: 'metrics',
+          label: 'Metrics Ingest',
+          position: { x: 160, y: 140 },
+          ports: [
+            { id: 'input', direction: 'input', label: 'probes', color: portPalette.control, acceptsColors: [portPalette.control] },
+            { id: 'timeseries', direction: 'output', label: 'time-series', color: portPalette.analytics },
+            { id: 'raw', direction: 'output', label: 'raw data', color: portPalette.data },
+          ],
+        },
+        {
+          id: 'slo',
+          label: 'SLO Evaluator',
+          position: { x: 420, y: 80 },
+          ports: [
+            {
+              id: 'metrics-in',
+              direction: 'input',
+              label: 'metrics',
+              color: portPalette.analytics,
+              acceptsColors: [portPalette.analytics],
+            },
+            { id: 'breaches', direction: 'output', label: 'breaches', color: portPalette.control },
+            { id: 'scores', direction: 'output', label: 'scores', color: portPalette.analytics },
+          ],
+        },
+        {
+          id: 'dashboard',
+          label: 'Dashboards',
+          position: { x: 420, y: 220 },
+          ports: [
+            {
+              id: 'feed',
+              direction: 'input',
+              label: 'analytics',
+              color: portPalette.analytics,
+              acceptsColors: [portPalette.analytics, portPalette.data],
+            },
+            { id: 'insights', direction: 'output', label: 'insights', color: portPalette.text },
+          ],
+        },
+        {
+          id: 'pager',
+          label: 'On-call Pager',
+          position: { x: 680, y: 60 },
+          ports: [
+            {
+              id: 'alerts',
+              direction: 'input',
+              label: 'alerts',
+              color: portPalette.control,
+              acceptsColors: [portPalette.control],
+            },
+            { id: 'tickets', direction: 'output', label: 'tickets', color: portPalette.text },
+          ],
+        },
+        {
+          id: 'warehouse',
+          label: 'Warehouse Sync',
+          position: { x: 680, y: 220 },
+          ports: [
+            {
+              id: 'input',
+              direction: 'input',
+              label: 'events',
+              color: portPalette.data,
+              acceptsColors: [portPalette.data, portPalette.analytics],
+            },
+            { id: 'exports', direction: 'output', label: 'exports', color: portPalette.data },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'obs-1', source: { nodeId: 'metrics', portId: 'timeseries' }, target: { nodeId: 'slo', portId: 'metrics-in' } },
+        { id: 'obs-2', source: { nodeId: 'metrics', portId: 'raw' }, target: { nodeId: 'dashboard', portId: 'feed' } },
+        { id: 'obs-3', source: { nodeId: 'slo', portId: 'breaches' }, target: { nodeId: 'pager', portId: 'alerts' } },
+        { id: 'obs-4', source: { nodeId: 'slo', portId: 'scores' }, target: { nodeId: 'dashboard', portId: 'feed' } },
+        { id: 'obs-5', source: { nodeId: 'dashboard', portId: 'insights' }, target: { nodeId: 'warehouse', portId: 'input' } },
+      ],
+      groups: [],
+    },
+    settings: {
+      interactive: true,
+      allowZoom: true,
+      allowPan: true,
+      allowNodeDrag: true,
+      syncViewport: true,
+      showNavigator: true,
+      navigatorExpanded: false,
+      showMiniMap: false,
+      showGrid: true,
+      snapToGrid: false,
+      gridSize: 40,
+      zoomExtent: [0.4, 2.1],
+      nodeWidth: 230,
+      nodeHeight: 180,
+      nodeCornerRadius: 14,
+      portSpacing: 30,
+      portRegionPadding: 50,
+      connectionMinControlDistance: 110,
+      connectionArrow: 'arrow',
+      theme: THEME_PRESETS.metropolis,
+      connectionPolicy: 'rules',
+      colorRules: (() => {
+        const rules = createDefaultColorRules();
+        const analyticsColor = portPalette.analytics;
+        const textColor = portPalette.text;
+        for (const type of portTypes) {
+          rules[type.color][analyticsColor] = true;
+        }
+        rules[analyticsColor][textColor] = true;
+        return rules;
+      })(),
+      preventSelfConnections: true,
+      initialSelection: { nodeId: 'dashboard', connectionId: 'obs-2' },
+    },
+  },
+];
 
 type SettingsTabKey = 'behavior' | 'canvas' | 'connections' | 'layout' | 'theme' | 'templates';
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const PlaygroundPage = (): JSX.Element => {
   const { graph, state } = useFlowgraph();
   const canvasRef = useRef<FlowCanvasHandle | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<keyof typeof graphPresets>('workflow');
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState<PlaygroundPreset['id']>('workflow');
   const [selection, setSelection] = useState<FlowgraphRendererSelection | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [inspectorExpanded, setInspectorExpanded] = useState(true);
   const [viewport, setViewport] = useState<FlowgraphRendererViewport | null>(null);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(false);
 
-  const themePresets: Record<string, FlowgraphRendererTheme> = useMemo(
-    () => ({
-      midnight: {
-        background: '#0f172a',
-        nodeFill: '#1e293b',
-        nodeStroke: '#334155',
-        nodeLabel: '#e2e8f0',
-        portFill: '#38bdf8',
-        connection: '#38bdf8',
-        connectionSelected: '#facc15',
-        draft: '#475569',
-        miniMapBackground: 'rgba(15, 23, 42, 0.86)',
-      },
-      aurora: {
-        background: '#031022',
-        nodeFill: '#13263b',
-        nodeStroke: '#1f3b5a',
-        nodeLabel: '#dce7ff',
-        portFill: '#6ee7b7',
-        connection: '#34d399',
-        connectionSelected: '#f87171',
-        draft: '#1f2937',
-        miniMapBackground: 'rgba(12, 24, 43, 0.85)',
-      },
-      sunrise: {
-        background: '#1b0f19',
-        nodeFill: '#341b2b',
-        nodeStroke: '#48263a',
-        nodeLabel: '#ffe5f1',
-        portFill: '#f472b6',
-        connection: '#fb7185',
-        connectionSelected: '#facc15',
-        draft: '#c084fc',
-        miniMapBackground: 'rgba(32, 14, 30, 0.88)',
-      },
-    }),
-    [],
-  );
+  const themePresets = useMemo(() => THEME_PRESETS, []);
 
   const [activePreset, setActivePreset] = useState<string>('midnight');
-  const [theme, setTheme] = useState<FlowgraphRendererTheme>(themePresets.midnight);
+  const [theme, setTheme] = useState<FlowgraphRendererTheme>(THEME_PRESETS.midnight);
   const [interactive, setInteractive] = useState(true);
   const [allowZoom, setAllowZoom] = useState(true);
   const [allowPan, setAllowPan] = useState(true);
   const [allowNodeDrag, setAllowNodeDrag] = useState(true);
   const [showMiniMap, setShowMiniMap] = useState(true);
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition>('top-right');
-  const [miniMapWidth, setMiniMapWidth] = useState(200);
-  const [miniMapHeight, setMiniMapHeight] = useState(140);
+  const [miniMapWidth, setMiniMapWidth] = useState(DEFAULT_MINIMAP_WIDTH);
+  const [miniMapHeight, setMiniMapHeight] = useState(DEFAULT_MINIMAP_HEIGHT);
   const [connectionArrow, setConnectionArrow] = useState<'arrow' | 'circle' | 'none'>('arrow');
   const [preventSelfConnections, setPreventSelfConnections] = useState(true);
   const [connectionPolicy, setConnectionPolicy] = useState<ConnectionPolicy>('match');
   const [colorRules, setColorRules] = useState<ColorRules>(() => createDefaultColorRules());
   const [showNavigator, setShowNavigator] = useState(true);
   const [navigatorExpanded, setNavigatorExpanded] = useState(true);
-  const [nodeWidth, setNodeWidth] = useState(220);
-  const [nodeHeight, setNodeHeight] = useState(160);
-  const [nodeCornerRadius, setNodeCornerRadius] = useState(16);
-  const [portSpacing, setPortSpacing] = useState(28);
-  const [portRegionPadding, setPortRegionPadding] = useState(52);
+  const [nodeWidth, setNodeWidth] = useState(DEFAULT_NODE_WIDTH);
+  const [nodeHeight, setNodeHeight] = useState(DEFAULT_NODE_HEIGHT);
+  const [nodeCornerRadius, setNodeCornerRadius] = useState(DEFAULT_NODE_CORNER_RADIUS);
+  const [portSpacing, setPortSpacing] = useState(DEFAULT_PORT_SPACING);
+  const [portRegionPadding, setPortRegionPadding] = useState(DEFAULT_PORT_REGION_PADDING);
   const [showGrid, setShowGrid] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(false);
-  const [gridSize, setGridSize] = useState(32);
+  const [gridSize, setGridSize] = useState(DEFAULT_GRID_SIZE);
+  const [canvasWidthInput, setCanvasWidthInput] = useState('');
+  const [canvasHeightInput, setCanvasHeightInput] = useState('');
   const [syncViewport, setSyncViewport] = useState(true);
-  const [connectionMinControlDistance, setConnectionMinControlDistance] = useState(80);
-  const [zoomMin, setZoomMin] = useState(0.3);
-  const [zoomMax, setZoomMax] = useState(2.5);
+  const [connectionMinControlDistance, setConnectionMinControlDistance] = useState(
+    DEFAULT_CONNECTION_MIN_CONTROL_DISTANCE,
+  );
+  const [zoomMin, setZoomMin] = useState(DEFAULT_ZOOM_MIN);
+  const [zoomMax, setZoomMax] = useState(DEFAULT_ZOOM_MAX);
+  const [rendererInstanceKey, setRendererInstanceKey] = useState(0);
+  const [pendingInitialSelection, setPendingInitialSelection] = useState<FlowgraphRendererSelection | null | undefined>(
+    undefined,
+  );
+  const [initialSelectionMode, setInitialSelectionMode] = useState<'none' | 'first-node' | 'first-connection' | 'snapshot'>(
+    'none',
+  );
+  const [initialSelectionSnapshot, setInitialSelectionSnapshot] = useState<FlowgraphRendererSelection | null>(null);
+  const normalizedZoomExtent = useMemo<[number, number]>(() => {
+    const minZoomValue = Math.max(0.05, Math.min(zoomMin, zoomMax));
+    const maxZoomValue = Math.max(minZoomValue + 0.05, Math.max(zoomMin, zoomMax));
+    return [minZoomValue, maxZoomValue];
+  }, [zoomMin, zoomMax]);
+  const resolvedCanvasWidth = useMemo(() => {
+    const trimmed = canvasWidthInput.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return undefined;
+    }
+    return clamp(Math.round(numeric), 240, 3200);
+  }, [canvasWidthInput]);
+  const resolvedCanvasHeight = useMemo(() => {
+    const trimmed = canvasHeightInput.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return undefined;
+    }
+    return clamp(Math.round(numeric), 200, 2400);
+  }, [canvasHeightInput]);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabKey>('behavior');
   const historyRef = useRef<FlowGraphState[]>([]);
   const historyIndexRef = useRef(-1);
   const isApplyingHistoryRef = useRef(false);
+  const hasAutoFitRef = useRef(false);
   const [historyAvailability, setHistoryAvailability] = useState({ canUndo: false, canRedo: false });
   const templatesRegisteredRef = useRef(false);
+  const pendingInitialSelectionRef = useRef<FlowgraphRendererSelection | null | undefined>(undefined);
+  const [templateSearch, setTemplateSearch] = useState('');
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [nodeLabelOverride, setNodeLabelOverride] = useState('');
   const [nodeReadonly, setNodeReadonly] = useState(false);
@@ -631,12 +1469,29 @@ const PlaygroundPage = (): JSX.Element => {
   const stateJson = useMemo(() => JSON.stringify(state, null, 2), [state]);
   const navigatorSummary = useMemo((): FlowGraphNavigatorSummary => buildNavigatorSummary(state), [state]);
   const templates = state.templates ?? [];
-  const templateGroups = useMemo(() => {
+  const visibleTemplates = useMemo(() => {
     if (templates.length === 0) {
+      return [] as GraphNodeTemplate[];
+    }
+    const query = templateSearch.trim().toLowerCase();
+    if (!query) {
+      return templates;
+    }
+    return templates.filter(template => {
+      const categoryMatch = template.category?.toLowerCase().includes(query);
+      const labelMatch = template.label?.toLowerCase().includes(query);
+      const descriptionMatch = template.description?.toLowerCase().includes(query);
+      const portMatch = template.ports.some(port => port.label?.toLowerCase().includes(query));
+      return Boolean(categoryMatch || labelMatch || descriptionMatch || portMatch);
+    });
+  }, [templates, templateSearch]);
+
+  const templateGroups = useMemo(() => {
+    if (visibleTemplates.length === 0) {
       return [] as Array<{ category: string; templates: GraphNodeTemplate[] }>;
     }
     const grouped = new Map<string, GraphNodeTemplate[]>();
-    for (const template of templates) {
+    for (const template of visibleTemplates) {
       const category = template.category ?? 'General';
       if (!grouped.has(category)) {
         grouped.set(category, []);
@@ -658,7 +1513,50 @@ const PlaygroundPage = (): JSX.Element => {
         category,
         templates: result.sort((a, b) => a.label.localeCompare(b.label)),
       }));
-  }, [templates]);
+  }, [visibleTemplates]);
+
+  const hasTemplates = templates.length > 0;
+  const hasActiveSearch = templateSearch.trim().length > 0;
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const previousHtmlOverflow = html.style.overflow;
+    const body = document.body;
+    const previousBodyOverflow = body.style.overflow;
+    const mainElement = document.querySelector<HTMLElement>(`.${appStyles.main}`);
+    const headerElement = document.querySelector<HTMLElement>(`.${appStyles.header}`);
+    const footerElement = document.querySelector<HTMLElement>(`.${appStyles.footer}`);
+    const previousMainPadding = mainElement?.style.padding ?? '';
+    const previousMainHeight = mainElement?.style.height ?? '';
+    const previousMainOverflow = mainElement?.style.overflow ?? '';
+
+    const applyLayoutSizing = () => {
+      if (!mainElement) {
+        return;
+      }
+      const headerHeight = headerElement?.offsetHeight ?? 0;
+      const footerHeight = footerElement?.offsetHeight ?? 0;
+      mainElement.style.padding = '0';
+      mainElement.style.height = `${window.innerHeight - headerHeight - footerHeight}px`;
+      mainElement.style.overflow = 'hidden';
+    };
+
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    applyLayoutSizing();
+    window.addEventListener('resize', applyLayoutSizing);
+
+    return () => {
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+      window.removeEventListener('resize', applyLayoutSizing);
+      if (mainElement) {
+        mainElement.style.padding = previousMainPadding;
+        mainElement.style.height = previousMainHeight;
+        mainElement.style.overflow = previousMainOverflow;
+      }
+    };
+  }, []);
 
   const activeTemplate = useMemo(
     () => (activeTemplateId ? templates.find(template => template.id === activeTemplateId) ?? null : null),
@@ -783,10 +1681,96 @@ const PlaygroundPage = (): JSX.Element => {
     syncHistoryAvailability();
   }, [graph, syncHistoryAvailability]);
 
+  const handleResetView = useCallback(() => {
+    const [minZoom, maxZoom] = normalizedZoomExtent;
+    const defaultZoom = clamp(1, minZoom, maxZoom);
+    graph.setViewport({ x: 0, y: 0 }, defaultZoom);
+  }, [graph, normalizedZoomExtent]);
+
+  const handleZoomStep = useCallback(
+    (direction: 'in' | 'out') => {
+      const [minZoom, maxZoom] = normalizedZoomExtent;
+      const renderer = canvasRef.current?.getRenderer();
+      const currentViewport = renderer?.getViewport() ?? viewport ?? { position: { x: 0, y: 0 }, zoom: 1 };
+      const factor = direction === 'in' ? 1.25 : 0.8;
+      const nextZoom = clamp(currentViewport.zoom * factor, minZoom, maxZoom);
+      graph.setViewport(currentViewport.position, nextZoom);
+    },
+    [canvasRef, graph, normalizedZoomExtent, viewport],
+  );
+
+  const handleFitToContent = useCallback(() => {
+    const container = canvasContainerRef.current;
+    if (!container) {
+      return;
+    }
+    const nodes = graph.getState().nodes;
+    if (nodes.length === 0) {
+      handleResetView();
+      return;
+    }
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    nodes.forEach(node => {
+      const width = node.size?.width ?? nodeWidth;
+      const height = node.size?.height ?? nodeHeight;
+      minX = Math.min(minX, node.position.x);
+      minY = Math.min(minY, node.position.y);
+      maxX = Math.max(maxX, node.position.x + width);
+      maxY = Math.max(maxY, node.position.y + height);
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+
+    const boundsWidth = Math.max(20, maxX - minX);
+    const boundsHeight = Math.max(20, maxY - minY);
+    const rect = container.getBoundingClientRect();
+    const padding = 160;
+    const innerWidth = Math.max(160, rect.width - padding);
+    const innerHeight = Math.max(160, rect.height - padding);
+    const [minZoom, maxZoom] = normalizedZoomExtent;
+    const zoomX = innerWidth / boundsWidth;
+    const zoomY = innerHeight / boundsHeight;
+    let nextZoom = Math.min(zoomX, zoomY);
+    if (!Number.isFinite(nextZoom) || nextZoom <= 0) {
+      nextZoom = clamp(1, minZoom, maxZoom);
+    }
+    nextZoom = clamp(nextZoom, minZoom, maxZoom);
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const halfWidth = rect.width / (2 * nextZoom);
+    const halfHeight = rect.height / (2 * nextZoom);
+    const position = {
+      x: centerX - halfWidth,
+      y: centerY - halfHeight,
+    };
+
+    graph.setViewport(position, nextZoom);
+  }, [canvasContainerRef, graph, handleResetView, nodeHeight, nodeWidth, normalizedZoomExtent]);
+
+  const handleRendererReady = useCallback(
+    (_renderer: FlowgraphRenderer<Record<string, unknown>>) => {
+      if (!hasAutoFitRef.current) {
+        requestAnimationFrame(() => {
+          handleFitToContent();
+        });
+        hasAutoFitRef.current = true;
+      }
+    },
+    [handleFitToContent],
+  );
+
   const applyThemePreset = useCallback(
     (presetKey: keyof typeof themePresets) => {
       setActivePreset(presetKey);
-      setTheme(themePresets[presetKey]);
+      setTheme({ ...themePresets[presetKey] });
     },
     [themePresets],
   );
@@ -851,15 +1835,16 @@ const PlaygroundPage = (): JSX.Element => {
   );
 
   const rendererOptions: FlowgraphRendererOptions = useMemo(() => {
-    const minZoom = Math.max(0.05, Math.min(zoomMin, zoomMax));
-    const maxZoom = Math.max(minZoom + 0.05, Math.max(zoomMin, zoomMax));
+    const [minZoom, maxZoom] = normalizedZoomExtent;
     const normalizedGridSize = Math.max(4, gridSize);
     const normalizedMiniMapWidth = Math.max(120, miniMapWidth);
     const normalizedMiniMapHeight = Math.max(80, miniMapHeight);
     const controlDistance = Math.max(24, connectionMinControlDistance);
     const shouldAttachValidator = preventSelfConnections || connectionPolicy !== 'any';
 
-    return {
+    const options: FlowgraphRendererOptions = {
+      width: resolvedCanvasWidth,
+      height: resolvedCanvasHeight,
       nodeSize: { width: nodeWidth, height: nodeHeight },
       nodeCornerRadius,
       portSpacing,
@@ -886,6 +1871,12 @@ const PlaygroundPage = (): JSX.Element => {
       onConnectionError: handleConnectionError,
       onViewportChange: next => setViewport(next),
     };
+
+    if (pendingInitialSelection !== undefined) {
+      options.initialSelection = pendingInitialSelection ?? null;
+    }
+
+    return options;
   }, [
     nodeWidth,
     nodeHeight,
@@ -906,10 +1897,12 @@ const PlaygroundPage = (): JSX.Element => {
     gridSize,
     snapToGrid,
     connectionMinControlDistance,
-    zoomMin,
-    zoomMax,
+    normalizedZoomExtent,
     theme,
     validateConnection,
+    resolvedCanvasWidth,
+    resolvedCanvasHeight,
+    pendingInitialSelection,
     preventSelfConnections,
     connectionPolicy,
     handleNodeSelect,
@@ -946,28 +1939,107 @@ const PlaygroundPage = (): JSX.Element => {
     [graph, viewport],
   );
 
-  const applyTemplate = useCallback(
-    (templateKey: keyof typeof graphPresets) => {
-      const template = graphPresets[templateKey];
-      graph.importState(template);
-      setSelectedTemplate(templateKey);
-      setSelection({ nodeId: template.nodes[0]?.id ?? null, connectionId: null });
+  const applyPreset = useCallback(
+    (presetId: PlaygroundPreset['id']) => {
+      const preset = playgroundPresets.find(item => item.id === presetId) ?? playgroundPresets[0];
+      if (!preset) {
+        return;
+      }
+
+      const snapshot = cloneState(preset.state);
+      graph.importState(snapshot);
+      setSelectedPresetId(preset.id);
+
+      const nextShowNavigator = preset.settings.showNavigator ?? true;
+      const nextNavigatorExpanded = preset.settings.navigatorExpanded ?? nextShowNavigator;
+
+      setInteractive(preset.settings.interactive ?? true);
+      setAllowZoom(preset.settings.allowZoom ?? true);
+      setAllowPan(preset.settings.allowPan ?? true);
+      setAllowNodeDrag(preset.settings.allowNodeDrag ?? true);
+      setSyncViewport(preset.settings.syncViewport ?? true);
+      setShowNavigator(nextShowNavigator);
+      setNavigatorExpanded(nextShowNavigator ? nextNavigatorExpanded : false);
+
+      setShowMiniMap(preset.settings.showMiniMap ?? true);
+      setMiniMapPosition(preset.settings.miniMapPosition ?? 'top-right');
+      setMiniMapWidth(preset.settings.miniMapSize?.width ?? DEFAULT_MINIMAP_WIDTH);
+      setMiniMapHeight(preset.settings.miniMapSize?.height ?? DEFAULT_MINIMAP_HEIGHT);
+
+      setShowGrid(preset.settings.showGrid ?? false);
+      setSnapToGrid(preset.settings.snapToGrid ?? false);
+      setGridSize(preset.settings.gridSize ?? DEFAULT_GRID_SIZE);
+
+      const nextZoomExtent = preset.settings.zoomExtent ?? [DEFAULT_ZOOM_MIN, DEFAULT_ZOOM_MAX];
+      setZoomMin(nextZoomExtent[0]);
+      setZoomMax(nextZoomExtent[1]);
+
+      setNodeWidth(preset.settings.nodeWidth ?? DEFAULT_NODE_WIDTH);
+      setNodeHeight(preset.settings.nodeHeight ?? DEFAULT_NODE_HEIGHT);
+      setNodeCornerRadius(preset.settings.nodeCornerRadius ?? DEFAULT_NODE_CORNER_RADIUS);
+      setPortSpacing(preset.settings.portSpacing ?? DEFAULT_PORT_SPACING);
+      setPortRegionPadding(preset.settings.portRegionPadding ?? DEFAULT_PORT_REGION_PADDING);
+      setConnectionMinControlDistance(
+        preset.settings.connectionMinControlDistance ?? DEFAULT_CONNECTION_MIN_CONTROL_DISTANCE,
+      );
+      setConnectionArrow(preset.settings.connectionArrow ?? 'arrow');
+
+      const nextCanvasWidth =
+        preset.settings.canvasWidth === undefined || preset.settings.canvasWidth === null
+          ? ''
+          : String(preset.settings.canvasWidth);
+      const nextCanvasHeight =
+        preset.settings.canvasHeight === undefined || preset.settings.canvasHeight === null
+          ? ''
+          : String(preset.settings.canvasHeight);
+      setCanvasWidthInput(nextCanvasWidth);
+      setCanvasHeightInput(nextCanvasHeight);
+
+      const nextPolicy = preset.settings.connectionPolicy ?? 'match';
+      setConnectionPolicy(nextPolicy);
+      const nextColorRules = preset.settings.colorRules
+        ? cloneColorRules(preset.settings.colorRules)
+        : createDefaultColorRules();
+      setColorRules(nextColorRules);
+      setPreventSelfConnections(preset.settings.preventSelfConnections ?? true);
+
+      if (preset.settings.theme) {
+        setTheme({ ...preset.settings.theme });
+      } else {
+        setTheme({ ...THEME_PRESETS.midnight });
+      }
+      setActivePreset('custom');
+
+      const initialSelection =
+        preset.settings.initialSelection !== undefined
+          ? preset.settings.initialSelection
+          : { nodeId: snapshot.nodes[0]?.id ?? null, connectionId: null };
+
+      setSelection(initialSelection ?? null);
+      setPendingInitialSelection(initialSelection ?? null);
+      setInitialSelectionMode('none');
+      setInitialSelectionSnapshot(null);
+
+      setViewport(null);
       setError(null);
+      hasAutoFitRef.current = false;
+      setRendererInstanceKey(prev => prev + 1);
+
       requestAnimationFrame(() => {
-        const firstNodeId = template.nodes[0]?.id;
-        if (firstNodeId) {
-          canvasRef.current?.getRenderer()?.focusNode(firstNodeId);
+        const targetNodeId = initialSelection?.nodeId ?? snapshot.nodes[0]?.id;
+        if (targetNodeId) {
+          canvasRef.current?.getRenderer()?.focusNode(targetNodeId);
         }
       });
     },
-    [graph],
+    [graph, canvasRef],
   );
 
   useEffect(() => {
     if (state.nodes.length === 0) {
-      applyTemplate('workflow');
+      applyPreset('workflow');
     }
-  }, [applyTemplate, state.nodes.length]);
+  }, [applyPreset, state.nodes.length]);
 
   useEffect(() => {
     if (!showGrid) {
@@ -981,6 +2053,16 @@ const PlaygroundPage = (): JSX.Element => {
     }
   }, [showNavigator]);
 
+  useEffect(() => {
+    pendingInitialSelectionRef.current = pendingInitialSelection;
+  }, [pendingInitialSelection]);
+
+  useEffect(() => {
+    if (pendingInitialSelectionRef.current !== undefined) {
+      setPendingInitialSelection(undefined);
+    }
+  }, [rendererInstanceKey]);
+
   const settingsTabs = useMemo(
     () => [
       { key: 'behavior', label: 'Behavior' },
@@ -992,6 +2074,72 @@ const PlaygroundPage = (): JSX.Element => {
     ],
     [],
   );
+
+  const activePresetDefinition = useMemo(
+    () => playgroundPresets.find(preset => preset.id === selectedPresetId) ?? playgroundPresets[0],
+    [selectedPresetId],
+  );
+
+  const handleCanvasWidthBlur = useCallback(() => {
+    const trimmed = canvasWidthInput.trim();
+    if (!trimmed) {
+      return;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      setCanvasWidthInput('');
+      return;
+    }
+    const normalized = clamp(Math.round(numeric), 240, 3200);
+    setCanvasWidthInput(String(normalized));
+  }, [canvasWidthInput]);
+
+  const handleCanvasHeightBlur = useCallback(() => {
+    const trimmed = canvasHeightInput.trim();
+    if (!trimmed) {
+      return;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      setCanvasHeightInput('');
+      return;
+    }
+    const normalized = clamp(Math.round(numeric), 200, 2400);
+    setCanvasHeightInput(String(normalized));
+  }, [canvasHeightInput]);
+
+  const handleResetCanvasDimensions = useCallback(() => {
+    setCanvasWidthInput('');
+    setCanvasHeightInput('');
+  }, []);
+
+  const handleCaptureInitialSelection = useCallback(() => {
+    if (!selection) {
+      return;
+    }
+    setInitialSelectionSnapshot(selection);
+    setInitialSelectionMode('snapshot');
+  }, [selection]);
+
+  const handleApplyInitialSelection = useCallback(() => {
+    let nextSelection: FlowgraphRendererSelection | null;
+    if (initialSelectionMode === 'first-node') {
+      const firstNode = state.nodes[0];
+      nextSelection = firstNode ? { nodeId: firstNode.id, connectionId: null } : null;
+    } else if (initialSelectionMode === 'first-connection') {
+      const firstConnection = state.connections[0];
+      nextSelection = firstConnection ? { nodeId: null, connectionId: firstConnection.id } : null;
+    } else if (initialSelectionMode === 'snapshot') {
+      nextSelection = initialSelectionSnapshot ?? null;
+    } else {
+      nextSelection = null;
+    }
+
+    setPendingInitialSelection(nextSelection);
+    hasAutoFitRef.current = false;
+    setRendererInstanceKey(prev => prev + 1);
+    setSelection(nextSelection ?? null);
+  }, [initialSelectionMode, initialSelectionSnapshot, state.connections, state.nodes]);
 
   const behaviorTabContent = (
     <>
@@ -1054,11 +2202,96 @@ const PlaygroundPage = (): JSX.Element => {
           />
         </label>
       </div>
+      <div className={styles.controlGroup}>
+        <span className={styles.groupLabel}>Initial selection</span>
+        <label className={styles.controlLabel} htmlFor="initial-selection-mode">
+          Mode
+          <select
+            id="initial-selection-mode"
+            value={initialSelectionMode}
+            onChange={event =>
+              setInitialSelectionMode(event.target.value as 'none' | 'first-node' | 'first-connection' | 'snapshot')
+            }
+          >
+            <option value="none">None (no pre-selection)</option>
+            <option value="first-node">First node in graph</option>
+            <option value="first-connection">First connection in graph</option>
+            <option value="snapshot" disabled={!initialSelectionSnapshot}>
+              Snapshot (captured selection)
+            </option>
+          </select>
+        </label>
+        <div className={styles.buttonRow}>
+          <button
+            type="button"
+            onClick={handleCaptureInitialSelection}
+            disabled={!selection}
+          >
+            Capture current selection
+          </button>
+          <button
+            type="button"
+            onClick={handleApplyInitialSelection}
+            disabled={initialSelectionMode === 'snapshot' && !initialSelectionSnapshot}
+          >
+            Apply on next load
+          </button>
+        </div>
+        <p className={styles.hint}>
+          Recreates the renderer so the chosen selection is applied once during mount. Perfect for demos or static
+          exports.
+        </p>
+        {initialSelectionMode === 'snapshot' ? (
+          <p className={styles.hint}>
+            {initialSelectionSnapshot
+              ? `Snapshot saved for node ${initialSelectionSnapshot.nodeId ?? '—'} and connection ${
+                  initialSelectionSnapshot.connectionId ?? '—'
+                }.`
+              : 'Capture a node or connection to enable the snapshot option.'}
+          </p>
+        ) : null}
+      </div>
     </>
   );
 
   const canvasTabContent = (
     <>
+      <div className={styles.controlGroup}>
+        <span className={styles.groupLabel}>Dimensions</span>
+        <div className={styles.inlineInputs}>
+          <label>
+            Width (px)
+            <input
+              type="number"
+              min={240}
+              max={3200}
+              placeholder="Auto"
+              value={canvasWidthInput}
+              onChange={event => setCanvasWidthInput(event.target.value)}
+              onBlur={handleCanvasWidthBlur}
+            />
+          </label>
+          <label>
+            Height (px)
+            <input
+              type="number"
+              min={200}
+              max={2400}
+              placeholder="Auto"
+              value={canvasHeightInput}
+              onChange={event => setCanvasHeightInput(event.target.value)}
+              onBlur={handleCanvasHeightBlur}
+            />
+          </label>
+        </div>
+        <button type="button" className={styles.clearButton} onClick={handleResetCanvasDimensions}>
+          Reset to auto
+        </button>
+        <p className={styles.hint}>
+          Leave either field blank to let the canvas flex with the layout. Values are clamped between 240–3200px for
+          width and 200–2400px for height.
+        </p>
+      </div>
       <div className={styles.controlGroup}>
         <span className={styles.groupLabel}>Minimap</span>
         <label className={styles.toggleRow}>
@@ -1233,6 +2466,22 @@ const PlaygroundPage = (): JSX.Element => {
             </label>
           ))}
         </div>
+        <div className={styles.buttonRow}>
+          {connectionRulePresets.map(preset => (
+            <button
+              key={preset.id}
+              type="button"
+              title={preset.description}
+              onClick={() => {
+                setConnectionPolicy('rules');
+                setColorRules(preset.factory());
+              }}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <p className={styles.hint}>Preset buttons apply curated palettes for the matrix below.</p>
         {connectionPolicy === 'rules' ? (
           <div className={styles.ruleMatrix}>
             <table>
@@ -1463,7 +2712,28 @@ const PlaygroundPage = (): JSX.Element => {
 
   const handleTemplateAllowAnyChange = useCallback((portId: string, allowAny: boolean) => {
     setPortDrafts(prev =>
-      prev.map(port => (port.id === portId ? { ...port, allowAny, acceptsColors: allowAny ? [] : port.acceptsColors } : port)),
+      prev.map(port => {
+        if (port.id !== portId) {
+          return port;
+        }
+        if (allowAny) {
+          return { ...port, allowAny: true, acceptsColors: [] };
+        }
+        if (port.typeId !== 'custom') {
+          const type = portTypeById.get(port.typeId);
+          const derivedAccepts = type
+            ? type.accepts
+                .map(id => portTypeById.get(id)?.color)
+                .filter((color): color is string => Boolean(color))
+            : [];
+          return {
+            ...port,
+            allowAny: derivedAccepts.length === 0,
+            acceptsColors: derivedAccepts.length > 0 ? derivedAccepts : port.acceptsColors,
+          };
+        }
+        return { ...port, allowAny: false };
+      }),
     );
   }, []);
 
@@ -1479,8 +2749,43 @@ const PlaygroundPage = (): JSX.Element => {
         } else {
           next.add(color);
         }
-        return { ...port, acceptsColors: Array.from(next) };
+        const acceptsColors = Array.from(next);
+        return { ...port, acceptsColors, allowAny: acceptsColors.length === 0 };
       }),
+    );
+  }, []);
+
+  const handleTemplateTypeChange = useCallback((portId: string, typeId: PortTypeId | 'custom') => {
+    setPortDrafts(prev =>
+      prev.map(port => {
+        if (port.id !== portId) {
+          return port;
+        }
+        const nextType = typeId !== 'custom' ? portTypeById.get(typeId) ?? null : null;
+        const shouldResetAccepts = typeId !== port.typeId || port.allowAny || port.acceptsColors.length === 0;
+        const derivedAccepts = nextType
+          ? nextType.accepts
+              .map(id => portTypeById.get(id)?.color)
+              .filter((color): color is string => Boolean(color))
+          : port.acceptsColors;
+        const acceptsColors = nextType && shouldResetAccepts ? derivedAccepts : port.acceptsColors;
+        const allowAny = acceptsColors.length === 0;
+        const color = nextType ? nextType.color : port.color ?? defaultCustomPortColor;
+        return {
+          ...port,
+          typeId,
+          color,
+          acceptsColors,
+          allowAny,
+        };
+      }),
+    );
+  }, []);
+
+  const handleTemplateCustomColorChange = useCallback((portId: string, color: string) => {
+    const normalised = color && color.startsWith('#') ? color : `#${color.replace(/[^0-9a-f]/gi, '').slice(0, 6)}`;
+    setPortDrafts(prev =>
+      prev.map(port => (port.id === portId ? { ...port, color: normalised || defaultCustomPortColor } : port)),
     );
   }, []);
 
@@ -1514,6 +2819,7 @@ const PlaygroundPage = (): JSX.Element => {
       }
       const nextPort: GraphPort = {
         ...basePort,
+        color: draft.color ?? basePort.color,
         maxConnections: draft.maxConnections ?? undefined,
         acceptsColors: draft.allowAny ? undefined : [...draft.acceptsColors],
       };
@@ -1546,8 +2852,29 @@ const PlaygroundPage = (): JSX.Element => {
     <>
       <div className={styles.controlGroup}>
         <span className={styles.groupLabel}>Library</span>
+        <div className={styles.inlineInputs}>
+          <label>
+            Search templates
+            <input
+              type="text"
+              id="template-search"
+              value={templateSearch}
+              placeholder="Search by label, category, or port"
+              onChange={event => setTemplateSearch(event.target.value)}
+            />
+          </label>
+          {hasActiveSearch ? (
+            <button type="button" className={styles.clearButton} onClick={() => setTemplateSearch('')}>
+              Clear
+            </button>
+          ) : null}
+        </div>
         {templateGroups.length === 0 ? (
-          <p className={styles.templatesEmpty}>Templates load automatically once the graph initialises.</p>
+          <p className={styles.templatesEmpty}>
+            {hasTemplates
+              ? 'No templates match your search. Try a different keyword or reset the filter.'
+              : 'Templates load automatically once the graph initialises.'}
+          </p>
         ) : (
           templateGroups.map(group => (
             <div key={group.category} className={styles.templateGroup}>
@@ -1639,6 +2966,39 @@ const PlaygroundPage = (): JSX.Element => {
                   <span className={styles.portDraftTitle}>{port.label ?? port.id}</span>
                   <span className={styles.portDraftBadge}>{port.direction === 'input' ? 'Input' : 'Output'}</span>
                   {port.color ? <span className={styles.colorChip} style={{ background: port.color }} /> : null}
+                  <span className={styles.portDraftType}>
+                    {port.typeId === 'custom'
+                      ? 'Custom'
+                      : portTypeById.get(port.typeId)?.label ?? port.typeId}
+                  </span>
+                </div>
+                <div className={styles.inlineInputs}>
+                  <label>
+                    Port type
+                    <select
+                      value={port.typeId}
+                      onChange={event =>
+                        handleTemplateTypeChange(port.id, event.target.value as PortTypeId | 'custom')
+                      }
+                    >
+                      {portTypes.map(type => (
+                        <option key={type.id} value={type.id}>
+                          {type.label}
+                        </option>
+                      ))}
+                      <option value="custom">Custom colour</option>
+                    </select>
+                  </label>
+                  {port.typeId === 'custom' ? (
+                    <label>
+                      Colour
+                      <input
+                        type="color"
+                        value={port.color ?? defaultCustomPortColor}
+                        onChange={event => handleTemplateCustomColorChange(port.id, event.target.value)}
+                      />
+                    </label>
+                  ) : null}
                 </div>
                 <div className={styles.inlineInputs}>
                   <label>
@@ -1661,19 +3021,22 @@ const PlaygroundPage = (): JSX.Element => {
                   </label>
                 </div>
                 {!port.allowAny ? (
-                  <div className={styles.checkboxGrid}>
-                    {colorOptions.map(color => (
-                      <label key={color.id}>
-                        <input
-                          type="checkbox"
-                          checked={port.acceptsColors.includes(color.color)}
-                          onChange={() => handleTemplateColorToggle(port.id, color.color)}
-                        />
-                        <span className={styles.colorChip} style={{ background: color.color }} />
-                        {color.label}
-                      </label>
-                    ))}
-                  </div>
+                  <>
+                    <p className={styles.hint}>Tick the IO types this port should accept.</p>
+                    <div className={styles.typeCheckboxGrid}>
+                      {portTypes.map(type => (
+                        <label key={type.id}>
+                          <input
+                            type="checkbox"
+                            checked={port.acceptsColors.includes(type.color)}
+                            onChange={() => handleTemplateColorToggle(port.id, type.color)}
+                          />
+                          <span className={styles.colorChip} style={{ background: type.color }} />
+                          {type.label}
+                        </label>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
               </div>
             ))}
@@ -1701,6 +3064,8 @@ const PlaygroundPage = (): JSX.Element => {
     theme: themeTabContent,
     templates: templatesTabContent,
   };
+
+  const handleDismissError = useCallback(() => setError(null), []);
 
   const clearSelection = useCallback(() => {
     setSelection({ nodeId: null, connectionId: null });
@@ -1756,54 +3121,190 @@ const PlaygroundPage = (): JSX.Element => {
   );
 
   return (
-    <div className={styles.playground}>
+    <div
+      className={styles.playground}
+      data-settings-collapsed={settingsCollapsed ? 'true' : 'false'}
+      data-navigator-collapsed={navigatorExpanded ? 'false' : 'true'}
+    >
+      {settingsCollapsed ? (
+        <button
+          type="button"
+          className={styles.settingsCollapsedHandle}
+          onClick={() => setSettingsCollapsed(false)}
+        >
+          Settings
+        </button>
+      ) : (
+        <aside className={styles.settingsPanel}>
+          <div className={styles.panelHeader}>
+            <div className={styles.panelHeaderText}>
+              <h1>Playground</h1>
+              <p>
+                Experiment with graph presets, colour rules, and reusable node templates. Settings update live, and you
+                can always undo changes as you iterate.
+              </p>
+            </div>
+            <button type="button" className={styles.collapseToggle} onClick={() => setSettingsCollapsed(true)}>
+              Collapse
+            </button>
+          </div>
+
+          <div className={styles.panelScroll}>
+            <label className={styles.controlLabel} htmlFor="graph-template-select">
+              Start from preset
+              <select
+                id="graph-template-select"
+                value={selectedPresetId}
+                onChange={event => applyPreset(event.target.value as PlaygroundPreset['id'])}
+              >
+                {playgroundPresets.map(preset => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {activePresetDefinition ? (
+              <p className={styles.hint}>{activePresetDefinition.description}</p>
+            ) : null}
+
+            <div className={styles.settingsSection}>
+              <nav className={styles.settingsTabs} role="tablist">
+                {settingsTabs.map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeSettingsTab === tab.key}
+                    className={clsx(styles.tabButton, activeSettingsTab === tab.key && styles.tabButtonActive)}
+                    onClick={() => setActiveSettingsTab(tab.key as SettingsTabKey)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+              <div className={styles.tabPanel} role="tabpanel">{tabContent[activeSettingsTab]}</div>
+            </div>
+
+            <div className={styles.actions}>
+              <button type="button" onClick={handleUndo} disabled={!historyAvailability.canUndo}>
+                Undo
+              </button>
+              <button type="button" onClick={handleRedo} disabled={!historyAvailability.canRedo}>
+                Redo
+              </button>
+              <button type="button" onClick={() => applyPreset(selectedPresetId)}>Reset preset</button>
+              <button type="button" onClick={deleteSelection} disabled={!selection?.nodeId && !selection?.connectionId}>
+                Delete selection
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(stateJson).catch(() => {});
+                }}
+              >
+                Copy JSON
+              </button>
+            </div>
+
+            <div className={styles.stats}>
+              <div>
+                <span className={styles.statLabel}>Nodes</span>
+                <span className={styles.statValue}>{state.nodes.length}</span>
+              </div>
+              <div>
+                <span className={styles.statLabel}>Connections</span>
+                <span className={styles.statValue}>{state.connections.length}</span>
+              </div>
+              <div>
+                <span className={styles.statLabel}>Groups</span>
+                <span className={styles.statValue}>{state.groups.length}</span>
+              </div>
+            </div>
+
+            {viewport ? (
+              <div className={styles.viewportBox}>
+                <span className={styles.statLabel}>Viewport</span>
+                <div className={styles.viewportValues}>
+                  <span>
+                    Zoom <strong>{viewport.zoom.toFixed(2)}×</strong>
+                  </span>
+                  <span>
+                    Offset <strong>{viewport.position.x.toFixed(0)}px</strong>,{' '}
+                    <strong>{viewport.position.y.toFixed(0)}px</strong>
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            <p className={styles.tip}>
+              Tip: drag empty canvas space to pan, scroll to zoom, and refine colour rules to control which ports can
+              talk to each other. The navigator on the right jumps to nodes instantly, and the Templates tab lets you
+              reuse and customise node shapes without mutating the original library.
+            </p>
+          </div>
+        </aside>
+      )}
+
       <main className={styles.stage} data-has-navigator={showNavigator ? 'true' : 'false'}>
         <div className={styles.canvasShell}>
-          <div className={styles.canvasWrapper}>
+          <div className={styles.canvasToolbar}>
+            <div className={styles.canvasToolbarGroup}>
+              <button type="button" onClick={() => handleZoomStep('out')} aria-label="Zoom out">
+                −
+              </button>
+              <button type="button" onClick={() => handleZoomStep('in')} aria-label="Zoom in">
+                +
+              </button>
+              <button type="button" onClick={handleResetView}>Reset view</button>
+              <button type="button" onClick={handleFitToContent}>Fit contents</button>
+            </div>
+            <div className={styles.canvasToolbarStatus}>
+              <span>
+                Zoom <strong>{viewport ? viewport.zoom.toFixed(2) : '—'}×</strong>
+              </span>
+              <span>
+                Offset{' '}
+                <strong>{viewport ? viewport.position.x.toFixed(0) : '—'}px</strong>,{' '}
+                <strong>{viewport ? viewport.position.y.toFixed(0) : '—'}px</strong>
+              </span>
+            </div>
+          </div>
+          <div ref={canvasContainerRef} className={styles.canvasWrapper}>
             <FlowCanvas
+              key={rendererInstanceKey}
               ref={canvasRef}
               graph={graph}
               rendererOptions={rendererOptions}
               selection={selection ?? undefined}
+              onRendererReady={handleRendererReady}
             />
           </div>
-          <section className={styles.inspector} data-expanded={inspectorExpanded ? 'true' : 'false'}>
-            <header>
-              <span>Graph state</span>
-              <div className={styles.inspectorControls}>
-                <button type="button" onClick={() => setInspectorExpanded(value => !value)}>
-                  {inspectorExpanded ? 'Collapse' : 'Expand'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(stateJson).catch(() => {});
-                  }}
-                >
-                  Copy
-                </button>
-              </div>
-            </header>
-            {inspectorExpanded ? <pre>{stateJson}</pre> : null}
-          </section>
-          {error ? <p className={styles.error}>{error}</p> : null}
+          {error ? (
+            <div className={styles.canvasAlert} role="alert">
+              <span>{error}</span>
+              <button type="button" onClick={handleDismissError} aria-label="Dismiss error">
+                ×
+              </button>
+            </div>
+          ) : null}
         </div>
         {showNavigator ? (
-          <section className={styles.navigator} data-expanded={navigatorExpanded ? 'true' : 'false'}>
-            <header>
-              <span>Navigator</span>
-              <div className={styles.navigatorControls}>
-                <span className={styles.navigatorTotalsLabel}>
-                  {navigatorSummary.totals.nodes} nodes · {navigatorSummary.totals.connections} connections ·{' '}
-                  {navigatorSummary.totals.groups} groups
-                </span>
-                <button type="button" onClick={() => setNavigatorExpanded(value => !value)}>
-                  {navigatorExpanded ? 'Collapse' : 'Expand'}
-                </button>
-              </div>
-            </header>
-            {navigatorExpanded ? (
-              <div className={styles.navigatorSections}>
+          navigatorExpanded ? (
+            <section className={styles.navigator} data-collapsed="false">
+              <header>
+                <span>Navigator</span>
+                <div className={styles.navigatorControls}>
+                  <span className={styles.navigatorTotalsLabel}>
+                    {navigatorSummary.totals.nodes} nodes · {navigatorSummary.totals.connections} connections ·{' '}
+                    {navigatorSummary.totals.groups} groups
+                  </span>
+                  <button type="button" onClick={() => setNavigatorExpanded(false)}>
+                    Collapse
+                  </button>
+                </div>
+              </header>
+              <div className={styles.navigatorScroll}>
                 {navigatorSummary.sections.map(section => (
                   <div key={section.id} className={styles.navigatorSection}>
                     <div className={styles.navigatorSectionHeader}>
@@ -1840,122 +3341,18 @@ const PlaygroundPage = (): JSX.Element => {
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className={styles.navigatorTotals}>
-                <span>
-                  Nodes <strong>{navigatorSummary.totals.nodes}</strong>
-                </span>
-                <span>
-                  Connections <strong>{navigatorSummary.totals.connections}</strong>
-                </span>
-                <span>
-                  Groups <strong>{navigatorSummary.totals.groups}</strong>
-                </span>
-              </div>
-            )}
-          </section>
+            </section>
+          ) : (
+            <button
+              type="button"
+              className={styles.navigatorCollapsedHandle}
+              onClick={() => setNavigatorExpanded(true)}
+            >
+              Navigator
+            </button>
+          )
         ) : null}
       </main>
-
-      <aside className={styles.settingsPanel}>
-        <div className={styles.panelHeader}>
-          <h1>Playground</h1>
-          <p>
-            Experiment with graph presets, colour rules, and reusable node templates. Settings update live, and you can
-            always undo changes as you iterate.
-          </p>
-        </div>
-
-        <label className={styles.controlLabel} htmlFor="graph-template-select">
-          Start from preset
-          <select
-            id="graph-template-select"
-            value={selectedTemplate}
-            onChange={event => applyTemplate(event.target.value as keyof typeof graphPresets)}
-          >
-            {Object.keys(graphPresets).map(key => (
-              <option key={key} value={key}>
-                {key.toUpperCase()}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className={styles.settingsSection}>
-          <nav className={styles.settingsTabs} role="tablist">
-            {settingsTabs.map(tab => (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={activeSettingsTab === tab.key}
-                className={clsx(styles.tabButton, activeSettingsTab === tab.key && styles.tabButtonActive)}
-                onClick={() => setActiveSettingsTab(tab.key as SettingsTabKey)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-          <div className={styles.tabPanel} role="tabpanel">{tabContent[activeSettingsTab]}</div>
-        </div>
-
-        <div className={styles.actions}>
-          <button type="button" onClick={handleUndo} disabled={!historyAvailability.canUndo}>
-            Undo
-          </button>
-          <button type="button" onClick={handleRedo} disabled={!historyAvailability.canRedo}>
-            Redo
-          </button>
-          <button type="button" onClick={() => applyTemplate(selectedTemplate)}>Reset preset</button>
-          <button type="button" onClick={deleteSelection} disabled={!selection?.nodeId && !selection?.connectionId}>
-            Delete selection
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard.writeText(stateJson).catch(() => {});
-            }}
-          >
-            Copy JSON
-          </button>
-        </div>
-
-        <div className={styles.stats}>
-          <div>
-            <span className={styles.statLabel}>Nodes</span>
-            <span className={styles.statValue}>{state.nodes.length}</span>
-          </div>
-          <div>
-            <span className={styles.statLabel}>Connections</span>
-            <span className={styles.statValue}>{state.connections.length}</span>
-          </div>
-          <div>
-            <span className={styles.statLabel}>Groups</span>
-            <span className={styles.statValue}>{state.groups.length}</span>
-          </div>
-        </div>
-
-        {viewport ? (
-          <div className={styles.viewportBox}>
-            <span className={styles.statLabel}>Viewport</span>
-            <div className={styles.viewportValues}>
-              <span>
-                Zoom <strong>{viewport.zoom.toFixed(2)}×</strong>
-              </span>
-              <span>
-                Offset <strong>{viewport.position.x.toFixed(0)}px</strong>,{' '}
-                <strong>{viewport.position.y.toFixed(0)}px</strong>
-              </span>
-            </div>
-          </div>
-        ) : null}
-
-        <p className={styles.tip}>
-          Tip: drag empty canvas space to pan, scroll to zoom, and refine colour rules to control which ports can talk
-          to each other. The navigator on the right jumps to nodes instantly, and the Templates tab lets you reuse and
-          customise node shapes without mutating the original library.
-        </p>
-      </aside>
     </div>
   );
 };
