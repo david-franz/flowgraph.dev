@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@flowtomic/flowgraph": "file:../..",
+    "@flowtomic/flowgraph-core-view": "file:../../packages/core-view",
+    "@flowtomic/flowgraph-react": "file:../../packages/react",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

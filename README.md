@@ -67,6 +67,16 @@ Three example projects (plus a CLI sample) live under `examples/`. All of them r
 
 Each demo includes the standard **FlowGraph Navigator** overlay which can be toggled on/off and keeps track of nodes, connections, and groups for the current graph.
 
+## Package family
+
+This repository now houses the broader Flowgraph toolkit:
+
+- **`@flowtomic/flowgraph`** – core state engine (this package).
+- **`@flowtomic/flowgraph-core-view`** – D3-powered renderer that turns graph state into an interactive SVG scene.
+- **`@flowtomic/flowgraph-react`** – React bindings (hooks + components) that wrap the core renderer for declarative apps.
+
+The additional packages live under `packages/` and are still under active development. They compile independently with `npm run build` executed inside each directory.
+
 ## Roadmap
 
 - [ ] Rich validation hooks for custom business rules

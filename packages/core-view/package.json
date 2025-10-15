@@ -1,0 +1,24 @@
+{
+  "name": "@flowtomic/flowgraph-core-view",
+  "version": "0.0.1",
+  "description": "D3-powered rendering primitives for @flowtomic/flowgraph.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0"
+  },
+  "peerDependencies": {
+    "@flowtomic/flowgraph": "^0.0.1"
+  },
+  "devDependencies": {
+    "@flowtomic/flowgraph": "file:../..",
+    "typescript": "^5.7.2"
+  }
+}

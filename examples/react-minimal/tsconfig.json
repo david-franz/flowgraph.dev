@@ -15,7 +15,11 @@
     "baseUrl": ".",
     "paths": {
       "@flowtomic/flowgraph": ["../../src"],
-      "@flowtomic/flowgraph/*": ["../../src/*"]
+      "@flowtomic/flowgraph/*": ["../../src/*"],
+      "@flowtomic/flowgraph-core-view": ["../../packages/core-view/src"],
+      "@flowtomic/flowgraph-core-view/*": ["../../packages/core-view/src/*"],
+      "@flowtomic/flowgraph-react": ["../../packages/react/src"],
+      "@flowtomic/flowgraph-react/*": ["../../packages/react/src/*"]
     }
   },
   "include": ["src"]

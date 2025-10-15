@@ -8,6 +8,8 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, 'src'),
       '@flowtomic/flowgraph': path.resolve(__dirname, '../../src'),
+      '@flowtomic/flowgraph-core-view': path.resolve(__dirname, '../../packages/core-view/src'),
+      '@flowtomic/flowgraph-react': path.resolve(__dirname, '../../packages/react/src'),
     },
   },
   server: {
