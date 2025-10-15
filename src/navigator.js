@@ -7,6 +7,7 @@ const createNodeItem = (node) => ({
     metadata: {
         position: node.position,
         ports: node.ports.length,
+        templateId: node.templateId ?? null,
     },
 });
 const createConnectionItem = (connection) => ({

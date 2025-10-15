@@ -12,17 +12,11 @@ function cloneNode(node) {
         ...node,
         position: { ...node.position },
         size: node.size ? { ...node.size } : undefined,
-        ports: node.ports.map(port => ({ ...port })),
+        ports: node.ports.map(clonePort),
         data: node.data ? { ...node.data } : undefined,
-        form: node.form
-            ? {
-                sections: node.form.sections.map(section => ({
-                    ...section,
-                    fields: section.fields.map(field => ({ ...field, options: field.options ? [...field.options] : undefined })),
-                })),
-            }
-            : undefined,
+        form: cloneForm(node.form),
         metadata: node.metadata ? { ...node.metadata } : undefined,
+        templateId: node.templateId,
     };
 }
 function cloneConnection(connection) {
@@ -31,6 +25,7 @@ function cloneConnection(connection) {
         source: { ...connection.source },
         target: { ...connection.target },
         path: connection.path ? connection.path.map(point => ({ ...point })) : undefined,
+        color: connection.color,
         metadata: connection.metadata ? { ...connection.metadata } : undefined,
     };
 }
@@ -47,10 +42,81 @@ function cloneGroup(group) {
         metadata: group.metadata ? { ...group.metadata } : undefined,
     };
 }
+function clonePort(port) {
+    return {
+        ...port,
+        acceptsColors: port.acceptsColors ? [...port.acceptsColors] : undefined,
+        metadata: port.metadata ? { ...port.metadata } : undefined,
+    };
+}
+function cloneForm(form) {
+    if (!form) {
+        return undefined;
+    }
+    return {
+        sections: form.sections.map(section => ({
+            ...section,
+            fields: section.fields.map(field => ({
+                ...field,
+                options: field.options ? [...field.options] : undefined,
+                props: field.props ? { ...field.props } : undefined,
+            })),
+        })),
+    };
+}
+function cloneTemplateDefaults(defaults) {
+    if (!defaults) {
+        return undefined;
+    }
+    const cloned = { ...defaults };
+    if (defaults?.ports) {
+        cloned.ports = defaults.ports.map(clonePort);
+    }
+    if (defaults?.form) {
+        cloned.form = cloneForm(defaults.form);
+    }
+    if (defaults?.data) {
+        cloned.data = { ...defaults.data };
+    }
+    if (defaults?.size) {
+        cloned.size = { ...defaults.size };
+    }
+    if (defaults?.metadata) {
+        cloned.metadata = { ...defaults.metadata };
+    }
+    if (defaults?.position) {
+        cloned.position = { ...defaults.position };
+    }
+    if (defaults?.groupId !== undefined) {
+        cloned.groupId = defaults.groupId;
+    }
+    if (defaults?.description !== undefined) {
+        cloned.description = defaults.description;
+    }
+    if (defaults?.label !== undefined) {
+        cloned.label = defaults.label;
+    }
+    if (defaults?.readonly !== undefined) {
+        cloned.readonly = defaults.readonly;
+    }
+    return cloned;
+}
+function cloneTemplate(template) {
+    return {
+        ...template,
+        ports: template.ports.map(clonePort),
+        form: cloneForm(template.form),
+        data: template.data ? { ...template.data } : undefined,
+        size: template.size ? { ...template.size } : undefined,
+        metadata: template.metadata ? { ...template.metadata } : undefined,
+        defaults: cloneTemplateDefaults(template.defaults),
+    };
+}
 export class FlowGraph {
     nodes = new Map();
     connections = new Map();
     groups = new Map();
+    templates = new Map();
     metadata;
     viewport;
     listeners = new Set();
@@ -60,12 +126,16 @@ export class FlowGraph {
         if (options.initialState) {
             this.importState(options.initialState, false);
         }
+        if (options.templates) {
+            this.registerTemplates(options.templates);
+        }
     }
     getState() {
         return {
             nodes: Array.from(this.nodes.values()).map(cloneNode),
             connections: Array.from(this.connections.values()).map(cloneConnection),
             groups: Array.from(this.groups.values()).map(cloneGroup),
+            templates: Array.from(this.templates.values()).map(cloneTemplate),
             viewport: this.viewport ? { position: { ...this.viewport.position }, zoom: this.viewport.zoom } : undefined,
             metadata: this.metadata ? { ...this.metadata } : undefined,
         };
@@ -73,6 +143,108 @@ export class FlowGraph {
     subscribe(listener) {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
+    }
+    registerTemplate(template) {
+        const stored = this.addTemplateInternal(template, true);
+        return cloneTemplate(stored);
+    }
+    registerTemplates(templates) {
+        return templates.map(template => this.registerTemplate(template));
+    }
+    unregisterTemplate(id) {
+        const removed = this.templates.get(id);
+        if (!removed) {
+            throw new FlowGraphError('TEMPLATE_NOT_FOUND', `Template with id "${id}" not found.`);
+        }
+        this.templates.delete(id);
+        this.emit('template:remove', cloneTemplate(removed));
+    }
+    getTemplate(id) {
+        const template = this.templates.get(id);
+        return template ? cloneTemplate(template) : undefined;
+    }
+    listTemplates() {
+        return Array.from(this.templates.values()).map(cloneTemplate);
+    }
+    updateTemplate(id, partial) {
+        const existing = this.getTemplateOrThrow(id);
+        const baseline = cloneTemplate(existing);
+        const updated = {
+            ...baseline,
+            ...partial,
+            ports: partial.ports ? partial.ports.map(clonePort) : baseline.ports,
+            form: partial.form ? cloneForm(partial.form) : baseline.form,
+            data: partial.data ? { ...partial.data } : baseline.data,
+            size: partial.size ? { ...partial.size } : baseline.size,
+            metadata: partial.metadata ? { ...partial.metadata } : baseline.metadata,
+            defaults: partial.defaults ? cloneTemplateDefaults(partial.defaults) : baseline.defaults,
+        };
+        this.validateTemplate(updated);
+        this.templates.set(id, updated);
+        this.emit('template:update', cloneTemplate(updated));
+        return cloneTemplate(updated);
+    }
+    createNodeFromTemplate(templateId, overrides = {}) {
+        const template = this.getTemplateOrThrow(templateId);
+        const defaults = template.defaults ?? {};
+        const id = overrides.id ?? this.idGenerator();
+        const basePorts = overrides.ports ?? defaults.ports ?? template.ports;
+        if (!basePorts || basePorts.length === 0) {
+            throw new FlowGraphError('INVALID_STATE', `Template "${templateId}" must define at least one port.`);
+        }
+        const resolveGroupId = () => {
+            if (Object.prototype.hasOwnProperty.call(overrides, 'groupId')) {
+                const value = overrides.groupId;
+                return value === undefined ? undefined : value ?? null;
+            }
+            if (defaults && Object.prototype.hasOwnProperty.call(defaults, 'groupId')) {
+                const value = defaults.groupId;
+                return value === undefined ? undefined : value ?? null;
+            }
+            return undefined;
+        };
+        const node = {
+            id,
+            label: overrides.label ?? defaults?.label ?? template.label,
+            description: overrides.description ?? defaults?.description ?? template.description,
+            position: overrides.position
+                ? { ...overrides.position }
+                : defaults?.position
+                    ? { ...defaults.position }
+                    : { x: 0, y: 0 },
+            size: overrides.size
+                ? { ...overrides.size }
+                : defaults?.size
+                    ? { ...defaults.size }
+                    : template.size
+                        ? { ...template.size }
+                        : undefined,
+            data: overrides.data
+                ? { ...overrides.data }
+                : defaults?.data
+                    ? { ...defaults.data }
+                    : template.data
+                        ? { ...template.data }
+                        : undefined,
+            ports: basePorts.map(clonePort),
+            form: cloneForm(overrides.form ?? defaults?.form ?? template.form),
+            groupId: resolveGroupId(),
+            metadata: overrides.metadata
+                ? { ...overrides.metadata }
+                : defaults?.metadata
+                    ? { ...defaults.metadata }
+                    : template.metadata
+                        ? { ...template.metadata }
+                        : undefined,
+            readonly: overrides.readonly ?? defaults?.readonly ?? false,
+            templateId: template.id,
+        };
+        this.validateNode(node);
+        return cloneNode(node);
+    }
+    addNodeFromTemplate(templateId, overrides = {}) {
+        const node = this.createNodeFromTemplate(templateId, overrides);
+        return this.addNode(node);
     }
     addNode(node) {
         if (this.nodes.has(node.id)) {
@@ -153,7 +325,12 @@ export class FlowGraph {
         }
         this.assertPortCapacity(connection.source, sourcePort);
         this.assertPortCapacity(connection.target, targetPort);
-        const stored = cloneConnection({ ...connection, id });
+        this.validatePortCompatibility({ nodeId: connection.source.nodeId, port: sourcePort }, { nodeId: connection.target.nodeId, port: targetPort });
+        const stored = cloneConnection({
+            ...connection,
+            id,
+            color: this.resolveConnectionColor(sourcePort, targetPort, connection.color),
+        });
         for (const existing of this.connections.values()) {
             if (existing.source.nodeId === stored.source.nodeId &&
                 existing.source.portId === stored.source.portId &&
@@ -172,30 +349,36 @@ export class FlowGraph {
     }
     updateConnection(id, partial) {
         const existing = this.getConnectionOrThrow(id);
-        const updated = cloneConnection({
-            ...existing,
-            ...partial,
-            source: partial.source ? { ...partial.source } : existing.source,
-            target: partial.target ? { ...partial.target } : existing.target,
-            path: partial.path ? partial.path.map(point => ({ ...point })) : existing.path,
-            metadata: partial.metadata ? { ...partial.metadata } : existing.metadata,
-        });
-        const sourceNode = this.getNodeOrThrow(updated.source.nodeId);
-        const targetNode = this.getNodeOrThrow(updated.target.nodeId);
-        const sourcePort = this.getPortOrThrow(sourceNode, updated.source.portId);
-        const targetPort = this.getPortOrThrow(targetNode, updated.target.portId);
+        const nextSource = partial.source ? { ...partial.source } : { ...existing.source };
+        const nextTarget = partial.target ? { ...partial.target } : { ...existing.target };
+        const nextPath = partial.path ? partial.path.map(point => ({ ...point })) : existing.path;
+        const nextMetadata = partial.metadata ? { ...partial.metadata } : existing.metadata;
+        const sourceNode = this.getNodeOrThrow(nextSource.nodeId);
+        const targetNode = this.getNodeOrThrow(nextTarget.nodeId);
+        const sourcePort = this.getPortOrThrow(sourceNode, nextSource.portId);
+        const targetPort = this.getPortOrThrow(targetNode, nextTarget.portId);
         if (sourcePort.direction !== 'output') {
             throw new FlowGraphError('PORT_DIRECTION_MISMATCH', `Source port "${sourcePort.id}" on node "${sourceNode.id}" is not an output port.`);
         }
         if (targetPort.direction !== 'input') {
             throw new FlowGraphError('PORT_DIRECTION_MISMATCH', `Target port "${targetPort.id}" on node "${targetNode.id}" is not an input port.`);
         }
-        const loopback = updated.source.nodeId === updated.target.nodeId;
+        const loopback = nextSource.nodeId === nextTarget.nodeId;
         if (loopback && !((sourcePort.allowLoopback ?? false) || (targetPort.allowLoopback ?? false))) {
-            throw new FlowGraphError('INVALID_STATE', `Loopback connection on node "${updated.source.nodeId}" requires allowLoopback to be enabled on at least one port.`);
+            throw new FlowGraphError('INVALID_STATE', `Loopback connection on node "${nextSource.nodeId}" requires allowLoopback to be enabled on at least one port.`);
         }
-        this.assertPortCapacity(updated.source, sourcePort, id);
-        this.assertPortCapacity(updated.target, targetPort, id);
+        this.assertPortCapacity(nextSource, sourcePort, id);
+        this.assertPortCapacity(nextTarget, targetPort, id);
+        this.validatePortCompatibility({ nodeId: nextSource.nodeId, port: sourcePort }, { nodeId: nextTarget.nodeId, port: targetPort });
+        const updated = cloneConnection({
+            ...existing,
+            ...partial,
+            source: nextSource,
+            target: nextTarget,
+            path: nextPath,
+            metadata: nextMetadata,
+            color: this.resolveConnectionColor(sourcePort, targetPort, partial.color ?? existing.color),
+        });
         for (const entry of this.connections.values()) {
             if (entry.id !== id &&
                 entry.source.nodeId === updated.source.nodeId &&
@@ -301,6 +484,12 @@ export class FlowGraph {
         if (!state) {
             throw new FlowGraphError('INVALID_STATE', 'Cannot import empty graph state.');
         }
+        if (state.templates !== undefined) {
+            this.templates.clear();
+            for (const template of state.templates) {
+                this.addTemplateInternal(template, notify);
+            }
+        }
         this.nodes.clear();
         this.connections.clear();
         this.groups.clear();
@@ -326,6 +515,7 @@ export class FlowGraph {
             }
             this.assertPortCapacity(connection.source, sourcePort);
             this.assertPortCapacity(connection.target, targetPort);
+            this.validatePortCompatibility({ nodeId: connection.source.nodeId, port: sourcePort }, { nodeId: connection.target.nodeId, port: targetPort });
             for (const existing of this.connections.values()) {
                 if (existing.source.nodeId === connection.source.nodeId &&
                     existing.source.portId === connection.source.portId &&
@@ -334,7 +524,8 @@ export class FlowGraph {
                     throw new FlowGraphError('CONNECTION_EXISTS', `Duplicate connection detected for ${connection.source.nodeId}:${connection.source.portId} -> ${connection.target.nodeId}:${connection.target.portId}.`);
                 }
             }
-            this.connections.set(connection.id, cloneConnection(connection));
+            const resolvedColor = this.resolveConnectionColor(sourcePort, targetPort, connection.color);
+            this.connections.set(connection.id, cloneConnection({ ...connection, color: resolvedColor }));
         }
         this.viewport = state.viewport
             ? { position: { ...state.viewport.position }, zoom: state.viewport.zoom }
@@ -361,6 +552,25 @@ export class FlowGraph {
             listener(event);
         }
     }
+    addTemplateInternal(template, notify) {
+        if (this.templates.has(template.id)) {
+            throw new FlowGraphError('TEMPLATE_EXISTS', `Template with id "${template.id}" already exists.`);
+        }
+        this.validateTemplate(template);
+        const stored = cloneTemplate(template);
+        this.templates.set(template.id, stored);
+        if (notify) {
+            this.emit('template:add', cloneTemplate(stored));
+        }
+        return stored;
+    }
+    getTemplateOrThrow(id) {
+        const template = this.templates.get(id);
+        if (!template) {
+            throw new FlowGraphError('TEMPLATE_NOT_FOUND', `Template with id "${id}" not found.`);
+        }
+        return template;
+    }
     getNodeOrThrow(id) {
         const node = this.nodes.get(id);
         if (!node) {
@@ -383,14 +593,7 @@ export class FlowGraph {
         return port;
     }
     validateNode(node) {
-        const portIds = new Set();
-        for (const port of node.ports) {
-            if (portIds.has(port.id)) {
-                throw new FlowGraphError('INVALID_STATE', `Duplicate port id "${port.id}" on node "${node.id}".`);
-            }
-            portIds.add(port.id);
-            this.validatePort(port, node.id);
-        }
+        this.validatePorts(node.ports, node.id);
     }
     validatePort(port, nodeId) {
         if (port.direction !== 'input' && port.direction !== 'output') {
@@ -398,6 +601,13 @@ export class FlowGraph {
         }
         if (port.maxConnections !== undefined && port.maxConnections < 0) {
             throw new FlowGraphError('INVALID_STATE', `Port "${port.id}" on node "${nodeId}" has invalid maxConnections.`);
+        }
+        if (port.acceptsColors) {
+            for (const color of port.acceptsColors) {
+                if (typeof color !== 'string' || color.trim() === '') {
+                    throw new FlowGraphError('INVALID_STATE', `Port "${port.id}" on node "${nodeId}" has an invalid acceptsColors entry.`);
+                }
+            }
         }
     }
     validateGroup(group) {
@@ -411,6 +621,72 @@ export class FlowGraph {
                 throw new FlowGraphError('NODE_NOT_FOUND', `Group "${group.id}" references missing node "${nodeId}".`);
             }
         }
+    }
+    validateTemplate(template) {
+        this.validatePorts(template.ports, template.id);
+        if (template.defaults?.ports) {
+            this.validatePorts(template.defaults.ports, `${template.id}:defaults`);
+        }
+    }
+    validatePorts(ports, ownerId) {
+        const portIds = new Set();
+        for (const port of ports) {
+            if (portIds.has(port.id)) {
+                throw new FlowGraphError('INVALID_STATE', `Duplicate port id "${port.id}" on "${ownerId}".`);
+            }
+            portIds.add(port.id);
+            this.validatePort(port, ownerId);
+        }
+    }
+    allowsColor(accepts, color) {
+        if (!accepts || accepts.length === 0 || !color) {
+            return false;
+        }
+        return accepts.some(entry => {
+            if (!entry) {
+                return false;
+            }
+            if (entry === '*' || entry.toLowerCase() === 'any') {
+                return true;
+            }
+            return entry === color;
+        });
+    }
+    validatePortCompatibility(source, target) {
+        const sourceColor = source.port.color ?? null;
+        const targetColor = target.port.color ?? null;
+        if (targetColor && source.port.acceptsColors && source.port.acceptsColors.length > 0) {
+            if (!this.allowsColor(source.port.acceptsColors, targetColor)) {
+                throw new FlowGraphError('PORT_COLOR_MISMATCH', `Port "${source.port.id}" on node "${source.nodeId}" does not accept connections from colour "${targetColor}".`);
+            }
+        }
+        if (sourceColor && target.port.acceptsColors && target.port.acceptsColors.length > 0) {
+            if (!this.allowsColor(target.port.acceptsColors, sourceColor)) {
+                throw new FlowGraphError('PORT_COLOR_MISMATCH', `Port "${target.port.id}" on node "${target.nodeId}" does not accept connections from colour "${sourceColor}".`);
+            }
+        }
+        if (sourceColor && targetColor && sourceColor !== targetColor) {
+            const targetAllows = this.allowsColor(target.port.acceptsColors, sourceColor);
+            const sourceAllows = this.allowsColor(source.port.acceptsColors, targetColor);
+            if (!targetAllows && !sourceAllows) {
+                throw new FlowGraphError('PORT_COLOR_MISMATCH', `Colour mismatch: ${source.nodeId}:${source.port.id} (${sourceColor}) cannot connect to ${target.nodeId}:${target.port.id} (${targetColor}).`);
+            }
+        }
+    }
+    resolveConnectionColor(sourcePort, targetPort, requested) {
+        if (requested) {
+            return requested;
+        }
+        if (sourcePort.color && targetPort.color && sourcePort.color === targetPort.color) {
+            return sourcePort.color;
+        }
+        if (sourcePort.color && this.allowsColor(targetPort.acceptsColors, sourcePort.color)) {
+            return sourcePort.color;
+        }
+        if (targetPort.color && this.allowsColor(sourcePort.acceptsColors, targetPort.color)) {
+            return targetPort.color;
+        }
+        return sourcePort.color ?? targetPort.color ?? requested;
     }
     assertPortCapacity(address, port, excludeConnectionId) {
         if (port.maxConnections === undefined) {

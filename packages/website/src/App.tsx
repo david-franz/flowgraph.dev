@@ -5,6 +5,7 @@ import WhyFlowgraphPage from './pages/WhyFlowgraphPage';
 import DocsPage from './pages/DocsPage';
 import PlaygroundPage from './pages/PlaygroundPage';
 import styles from './styles/App.module.css';
+import { FLOWGRAPH_LOGO_DATA_URL } from './assets/flowgraphLogo';
 
 const routes = [
   { path: '/', label: 'Home', element: <LandingPage /> },
@@ -16,7 +17,10 @@ const routes = [
 const App = (): JSX.Element => (
   <div className={styles.appShell}>
     <header className={styles.header}>
-      <div className={styles.brand}>Flowgraph</div>
+      <NavLink to="/" className={styles.brand}>
+        <img src={FLOWGRAPH_LOGO_DATA_URL} alt="Flowgraph logo" className={styles.brandMark} />
+        <span className={styles.brandText}>Flowgraph</span>
+      </NavLink>
       <nav className={styles.nav}>
         {routes.map(route => (
           <NavLink

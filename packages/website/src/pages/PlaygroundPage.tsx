@@ -220,27 +220,6 @@ const connectionPolicyOptions: Array<{ key: ConnectionPolicy; label: string; des
   },
 ];
 
-const connectionRulePresets = [
-  {
-    id: 'types',
-    label: 'Type defaults',
-    description: 'Reset to the compatibility map derived from IO types.',
-    factory: createDefaultColorRules,
-  },
-  {
-    id: 'strict',
-    label: 'Identical only',
-    description: 'Allow connections only when the types match exactly.',
-    factory: createStrictColorRules,
-  },
-  {
-    id: 'broadcast',
-    label: 'Control broadcast',
-    description: 'Control-flow outputs can target any type; others follow type defaults.',
-    factory: createControlBroadcastRules,
-  },
-] as const;
-
 const colorLabelByValue = Object.fromEntries(colorOptions.map(option => [option.color, option.label]));
 
 const createDefaultColorRules = (): ColorRules => {
@@ -294,6 +273,27 @@ const createControlBroadcastRules = (): ColorRules => {
 };
 
 const cloneColorRules = (rules: ColorRules): ColorRules => JSON.parse(JSON.stringify(rules));
+
+const connectionRulePresets = [
+  {
+    id: 'types',
+    label: 'Type defaults',
+    description: 'Reset to the compatibility map derived from IO types.',
+    factory: createDefaultColorRules,
+  },
+  {
+    id: 'strict',
+    label: 'Identical only',
+    description: 'Allow connections only when the types match exactly.',
+    factory: createStrictColorRules,
+  },
+  {
+    id: 'broadcast',
+    label: 'Control broadcast',
+    description: 'Control-flow outputs can target any type; others follow type defaults.',
+    factory: createControlBroadcastRules,
+  },
+] as const;
 
 const describeColor = (value: string | null | undefined): string => {
   if (!value) {
