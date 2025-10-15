@@ -36,6 +36,7 @@ const createNodeItem = <TNodeData>(node: GraphNode<TNodeData>): FlowGraphNavigat
   metadata: {
     position: node.position,
     ports: node.ports.length,
+    templateId: node.templateId ?? null,
   },
 });
 

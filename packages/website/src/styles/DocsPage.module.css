@@ -78,6 +78,46 @@
   line-height: 1.6;
 }
 
+.tableWrapper {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(2, 6, 23, 0.65);
+}
+
+.optionsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  color: #e2e8f0;
+}
+
+.optionsTable th,
+.optionsTable td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.optionsTable thead th {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.optionsTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.optionsTable code {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(15, 23, 42, 0.7);
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.35rem;
+  font-size: 0.85em;
+}
+
 @media (max-width: 960px) {
   .docs {
     grid-template-columns: 1fr;

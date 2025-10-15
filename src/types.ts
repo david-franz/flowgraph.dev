@@ -19,6 +19,10 @@ export interface GraphPort {
   direction: PortDirection;
   /** Optional semantic type hint that UIs can use for styling or validation. */
   dataType?: string;
+  /** Visual token used when rendering ports or deriving connection colours. */
+  color?: string;
+  /** Optional list of port colours this port can connect to. */
+  acceptsColors?: string[];
   /** Maximum number of connections that can attach to the port. */
   maxConnections?: number;
   /** If true, the port may connect to another port on the same node. */
@@ -38,6 +42,8 @@ export interface GraphConnection {
   target: PortAddress;
   /** Optional bezier control points or routing hints. */
   path?: Point[];
+  /** Specific stroke colour for the rendered connection. */
+  color?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -98,6 +104,8 @@ export interface GraphNode<TData = Record<string, unknown>> {
   metadata?: Record<string, unknown>;
   /** When true the node should be treated as read-only in the editor. */
   readonly?: boolean;
+  /** Identifier of the template this node was instantiated from. */
+  templateId?: string;
 }
 
 export interface GraphGroup {
@@ -114,6 +122,28 @@ export interface GraphGroup {
   metadata?: Record<string, unknown>;
 }
 
+export interface GraphNodeTemplate<TData = Record<string, unknown>> {
+  id: string;
+  label: string;
+  description?: string;
+  category?: string;
+  /** Default node configuration applied when instantiating the template. */
+  defaults?: Partial<Omit<GraphNode<TData>, 'id' | 'ports' | 'position' | 'templateId'>> & {
+    ports?: GraphPort[];
+    position?: Point;
+  };
+  /** Ports that instantiated nodes should inherit unless overridden. */
+  ports: GraphPort[];
+  /** Optional schema used when editing template-backed nodes. */
+  form?: NodeFormSchema;
+  /** Optional default data payload. */
+  data?: TData;
+  /** Optional default size hints. */
+  size?: Size;
+  /** Additional metadata for renderers. */
+  metadata?: Record<string, unknown>;
+}
+
 export interface FlowGraphState<TNodeData = Record<string, unknown>> {
   nodes: GraphNode<TNodeData>[];
   connections: GraphConnection[];
@@ -124,6 +154,8 @@ export interface FlowGraphState<TNodeData = Record<string, unknown>> {
   };
   /** Arbitrary metadata stored at graph level. */
   metadata?: Record<string, unknown>;
+  /** Optional template catalogue serialised with the graph. */
+  templates?: GraphNodeTemplate<TNodeData>[];
 }
 
 export type GraphUpdateReason =
@@ -138,6 +170,9 @@ export type GraphUpdateReason =
   | 'connection:add'
   | 'connection:remove'
   | 'connection:update'
+  | 'template:add'
+  | 'template:remove'
+  | 'template:update'
   | 'graph:import'
   | 'graph:metadata';
 

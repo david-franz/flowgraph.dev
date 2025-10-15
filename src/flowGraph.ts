@@ -5,8 +5,10 @@ import {
   GraphConnection,
   GraphGroup,
   GraphNode,
+  GraphNodeTemplate,
   GraphPort,
   GraphUpdateReason,
+  NodeFormSchema,
   PortAddress,
   PortDirection,
   Point,
@@ -26,6 +28,7 @@ const defaultId = (): string => {
 export interface FlowGraphOptions<TNodeData = Record<string, unknown>> {
   initialState?: FlowGraphState<TNodeData>;
   idGenerator?: () => string;
+  templates?: GraphNodeTemplate<TNodeData>[];
 }
 
 function cloneNode<TNodeData>(node: GraphNode<TNodeData>): GraphNode<TNodeData> {
@@ -33,17 +36,11 @@ function cloneNode<TNodeData>(node: GraphNode<TNodeData>): GraphNode<TNodeData> 
     ...node,
     position: { ...node.position },
     size: node.size ? { ...node.size } : undefined,
-    ports: node.ports.map(port => ({ ...port })),
+    ports: node.ports.map(clonePort),
     data: node.data ? { ...node.data } : undefined,
-    form: node.form
-      ? {
-          sections: node.form.sections.map(section => ({
-            ...section,
-            fields: section.fields.map(field => ({ ...field, options: field.options ? [...field.options] : undefined })),
-          })),
-        }
-      : undefined,
+    form: cloneForm(node.form),
     metadata: node.metadata ? { ...node.metadata } : undefined,
+    templateId: node.templateId,
   };
 }
 
@@ -53,6 +50,7 @@ function cloneConnection(connection: GraphConnection): GraphConnection {
     source: { ...connection.source },
     target: { ...connection.target },
     path: connection.path ? connection.path.map(point => ({ ...point })) : undefined,
+    color: connection.color,
     metadata: connection.metadata ? { ...connection.metadata } : undefined,
   };
 }
@@ -71,10 +69,89 @@ function cloneGroup(group: GraphGroup): GraphGroup {
   };
 }
 
+function clonePort(port: GraphPort): GraphPort {
+  return {
+    ...port,
+    acceptsColors: port.acceptsColors ? [...port.acceptsColors] : undefined,
+    metadata: port.metadata ? { ...port.metadata } : undefined,
+  };
+}
+
+function cloneForm(form?: NodeFormSchema): NodeFormSchema | undefined {
+  if (!form) {
+    return undefined;
+  }
+  return {
+    sections: form.sections.map(section => ({
+      ...section,
+      fields: section.fields.map(field => ({
+        ...field,
+        options: field.options ? [...field.options] : undefined,
+        props: field.props ? { ...field.props } : undefined,
+      })),
+    })),
+  };
+}
+
+function cloneTemplateDefaults<TNodeData extends Record<string, unknown>>(
+  defaults: GraphNodeTemplate<TNodeData>['defaults'],
+): GraphNodeTemplate<TNodeData>['defaults'] {
+  if (!defaults) {
+    return undefined;
+  }
+  const cloned: GraphNodeTemplate<TNodeData>['defaults'] = { ...defaults };
+  if (defaults?.ports) {
+    cloned.ports = defaults.ports.map(clonePort);
+  }
+  if (defaults?.form) {
+    cloned.form = cloneForm(defaults.form);
+  }
+  if (defaults?.data) {
+    cloned.data = { ...defaults.data } as TNodeData;
+  }
+  if (defaults?.size) {
+    cloned.size = { ...defaults.size };
+  }
+  if (defaults?.metadata) {
+    cloned.metadata = { ...defaults.metadata };
+  }
+  if (defaults?.position) {
+    cloned.position = { ...defaults.position };
+  }
+  if (defaults?.groupId !== undefined) {
+    cloned.groupId = defaults.groupId;
+  }
+  if (defaults?.description !== undefined) {
+    cloned.description = defaults.description;
+  }
+  if (defaults?.label !== undefined) {
+    cloned.label = defaults.label;
+  }
+  if (defaults?.readonly !== undefined) {
+    cloned.readonly = defaults.readonly;
+  }
+  return cloned;
+}
+
+function cloneTemplate<TNodeData extends Record<string, unknown>>(
+  template: GraphNodeTemplate<TNodeData>,
+): GraphNodeTemplate<TNodeData> {
+  return {
+    ...template,
+    ports: template.ports.map(clonePort),
+    form: cloneForm(template.form),
+    data: template.data ? { ...template.data } : undefined,
+    size: template.size ? { ...template.size } : undefined,
+    metadata: template.metadata ? { ...template.metadata } : undefined,
+    defaults: cloneTemplateDefaults(template.defaults),
+  };
+}
+
 export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string, unknown>> {
   private readonly nodes = new Map<string, GraphNode<TNodeData>>();
   private readonly connections = new Map<string, GraphConnection>();
   private readonly groups = new Map<string, GraphGroup>();
+  private readonly templates = new Map<string, GraphNodeTemplate<TNodeData>>();
   private metadata: Record<string, unknown> | undefined;
   private viewport: FlowGraphState<TNodeData>['viewport'];
   private readonly listeners = new Set<FlowGraphListener<TNodeData>>();
@@ -86,6 +163,9 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     if (options.initialState) {
       this.importState(options.initialState, false);
     }
+    if (options.templates) {
+      this.registerTemplates(options.templates);
+    }
   }
 
   getState(): FlowGraphState<TNodeData> {
@@ -93,6 +173,7 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
       nodes: Array.from(this.nodes.values()).map(cloneNode),
       connections: Array.from(this.connections.values()).map(cloneConnection),
       groups: Array.from(this.groups.values()).map(cloneGroup),
+      templates: Array.from(this.templates.values()).map(cloneTemplate),
       viewport: this.viewport ? { position: { ...this.viewport.position }, zoom: this.viewport.zoom } : undefined,
       metadata: this.metadata ? { ...this.metadata } : undefined,
     };
@@ -101,6 +182,128 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
   subscribe(listener: FlowGraphListener<TNodeData>): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  registerTemplate(template: GraphNodeTemplate<TNodeData>): GraphNodeTemplate<TNodeData> {
+    const stored = this.addTemplateInternal(template, true);
+    return cloneTemplate(stored);
+  }
+
+  registerTemplates(templates: GraphNodeTemplate<TNodeData>[]): GraphNodeTemplate<TNodeData>[] {
+    return templates.map(template => this.registerTemplate(template));
+  }
+
+  unregisterTemplate(id: string): void {
+    const removed = this.templates.get(id);
+    if (!removed) {
+      throw new FlowGraphError('TEMPLATE_NOT_FOUND', `Template with id "${id}" not found.`);
+    }
+    this.templates.delete(id);
+    this.emit('template:remove', cloneTemplate(removed));
+  }
+
+  getTemplate(id: string): GraphNodeTemplate<TNodeData> | undefined {
+    const template = this.templates.get(id);
+    return template ? cloneTemplate(template) : undefined;
+  }
+
+  listTemplates(): GraphNodeTemplate<TNodeData>[] {
+    return Array.from(this.templates.values()).map(cloneTemplate);
+  }
+
+  updateTemplate(
+    id: string,
+    partial: Partial<Omit<GraphNodeTemplate<TNodeData>, 'id'>>,
+  ): GraphNodeTemplate<TNodeData> {
+    const existing = this.getTemplateOrThrow(id);
+    const baseline = cloneTemplate(existing);
+    const updated: GraphNodeTemplate<TNodeData> = {
+      ...baseline,
+      ...partial,
+      ports: partial.ports ? partial.ports.map(clonePort) : baseline.ports,
+      form: partial.form ? cloneForm(partial.form) : baseline.form,
+      data: partial.data ? { ...partial.data } : baseline.data,
+      size: partial.size ? { ...partial.size } : baseline.size,
+      metadata: partial.metadata ? { ...partial.metadata } : baseline.metadata,
+      defaults: partial.defaults ? cloneTemplateDefaults(partial.defaults) : baseline.defaults,
+    };
+    this.validateTemplate(updated);
+    this.templates.set(id, updated);
+    this.emit('template:update', cloneTemplate(updated));
+    return cloneTemplate(updated);
+  }
+
+  createNodeFromTemplate(
+    templateId: string,
+    overrides: Partial<Omit<GraphNode<TNodeData>, 'id'>> & { id?: string } = {},
+  ): GraphNode<TNodeData> {
+    const template = this.getTemplateOrThrow(templateId);
+    const defaults = template.defaults ?? {};
+    const id = overrides.id ?? this.idGenerator();
+    const basePorts = overrides.ports ?? defaults.ports ?? template.ports;
+    if (!basePorts || basePorts.length === 0) {
+      throw new FlowGraphError('INVALID_STATE', `Template "${templateId}" must define at least one port.`);
+    }
+
+    const resolveGroupId = (): string | null | undefined => {
+      if (Object.prototype.hasOwnProperty.call(overrides, 'groupId')) {
+        const value = overrides.groupId as string | null | undefined;
+        return value === undefined ? undefined : value ?? null;
+      }
+      if (defaults && Object.prototype.hasOwnProperty.call(defaults, 'groupId')) {
+        const value = defaults.groupId as string | null | undefined;
+        return value === undefined ? undefined : value ?? null;
+      }
+      return undefined;
+    };
+
+    const node: GraphNode<TNodeData> = {
+      id,
+      label: overrides.label ?? defaults?.label ?? template.label,
+      description: overrides.description ?? defaults?.description ?? template.description,
+      position: overrides.position
+        ? { ...overrides.position }
+        : defaults?.position
+        ? { ...defaults.position }
+        : { x: 0, y: 0 },
+      size: overrides.size
+        ? { ...overrides.size }
+        : defaults?.size
+        ? { ...defaults.size }
+        : template.size
+        ? { ...template.size }
+        : undefined,
+      data: overrides.data
+        ? { ...overrides.data }
+        : defaults?.data
+        ? { ...(defaults.data as TNodeData) }
+        : template.data
+        ? { ...template.data }
+        : undefined,
+      ports: basePorts.map(clonePort),
+      form: cloneForm(overrides.form ?? defaults?.form ?? template.form),
+      groupId: resolveGroupId(),
+      metadata: overrides.metadata
+        ? { ...overrides.metadata }
+        : defaults?.metadata
+        ? { ...defaults.metadata }
+        : template.metadata
+        ? { ...template.metadata }
+        : undefined,
+      readonly: overrides.readonly ?? defaults?.readonly ?? false,
+      templateId: template.id,
+    };
+
+    this.validateNode(node);
+    return cloneNode(node);
+  }
+
+  addNodeFromTemplate(
+    templateId: string,
+    overrides: Partial<Omit<GraphNode<TNodeData>, 'id'>> & { id?: string } = {},
+  ): GraphNode<TNodeData> {
+    const node = this.createNodeFromTemplate(templateId, overrides);
+    return this.addNode(node);
   }
 
   addNode(node: GraphNode<TNodeData>): GraphNode<TNodeData> {
@@ -197,8 +400,16 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
 
     this.assertPortCapacity(connection.source, sourcePort);
     this.assertPortCapacity(connection.target, targetPort);
+    this.validatePortCompatibility(
+      { nodeId: connection.source.nodeId, port: sourcePort },
+      { nodeId: connection.target.nodeId, port: targetPort },
+    );
 
-    const stored = cloneConnection({ ...connection, id });
+    const stored = cloneConnection({
+      ...connection,
+      id,
+      color: this.resolveConnectionColor(sourcePort, targetPort, connection.color),
+    });
     for (const existing of this.connections.values()) {
       if (
         existing.source.nodeId === stored.source.nodeId &&
@@ -228,19 +439,15 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
 
   updateConnection(id: string, partial: Partial<Omit<GraphConnection, 'id'>>): GraphConnection {
     const existing = this.getConnectionOrThrow(id);
-    const updated: GraphConnection = cloneConnection({
-      ...existing,
-      ...partial,
-      source: partial.source ? { ...partial.source } : existing.source,
-      target: partial.target ? { ...partial.target } : existing.target,
-      path: partial.path ? partial.path.map(point => ({ ...point })) : existing.path,
-      metadata: partial.metadata ? { ...partial.metadata } : existing.metadata,
-    });
+    const nextSource = partial.source ? { ...partial.source } : { ...existing.source };
+    const nextTarget = partial.target ? { ...partial.target } : { ...existing.target };
+    const nextPath = partial.path ? partial.path.map(point => ({ ...point })) : existing.path;
+    const nextMetadata = partial.metadata ? { ...partial.metadata } : existing.metadata;
 
-    const sourceNode = this.getNodeOrThrow(updated.source.nodeId);
-    const targetNode = this.getNodeOrThrow(updated.target.nodeId);
-    const sourcePort = this.getPortOrThrow(sourceNode, updated.source.portId);
-    const targetPort = this.getPortOrThrow(targetNode, updated.target.portId);
+    const sourceNode = this.getNodeOrThrow(nextSource.nodeId);
+    const targetNode = this.getNodeOrThrow(nextTarget.nodeId);
+    const sourcePort = this.getPortOrThrow(sourceNode, nextSource.portId);
+    const targetPort = this.getPortOrThrow(targetNode, nextTarget.portId);
 
     if (sourcePort.direction !== 'output') {
       throw new FlowGraphError(
@@ -255,16 +462,30 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
       );
     }
 
-    const loopback = updated.source.nodeId === updated.target.nodeId;
+    const loopback = nextSource.nodeId === nextTarget.nodeId;
     if (loopback && !((sourcePort.allowLoopback ?? false) || (targetPort.allowLoopback ?? false))) {
       throw new FlowGraphError(
         'INVALID_STATE',
-        `Loopback connection on node "${updated.source.nodeId}" requires allowLoopback to be enabled on at least one port.`,
+        `Loopback connection on node "${nextSource.nodeId}" requires allowLoopback to be enabled on at least one port.`,
       );
     }
 
-    this.assertPortCapacity(updated.source, sourcePort, id);
-    this.assertPortCapacity(updated.target, targetPort, id);
+    this.assertPortCapacity(nextSource, sourcePort, id);
+    this.assertPortCapacity(nextTarget, targetPort, id);
+    this.validatePortCompatibility(
+      { nodeId: nextSource.nodeId, port: sourcePort },
+      { nodeId: nextTarget.nodeId, port: targetPort },
+    );
+
+    const updated: GraphConnection = cloneConnection({
+      ...existing,
+      ...partial,
+      source: nextSource,
+      target: nextTarget,
+      path: nextPath,
+      metadata: nextMetadata,
+      color: this.resolveConnectionColor(sourcePort, targetPort, partial.color ?? existing.color),
+    });
 
     for (const entry of this.connections.values()) {
       if (
@@ -386,6 +607,13 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     if (!state) {
       throw new FlowGraphError('INVALID_STATE', 'Cannot import empty graph state.');
     }
+    if (state.templates !== undefined) {
+      this.templates.clear();
+      for (const template of state.templates) {
+        this.addTemplateInternal(template, notify);
+      }
+    }
+
     this.nodes.clear();
     this.connections.clear();
     this.groups.clear();
@@ -417,6 +645,10 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
       }
       this.assertPortCapacity(connection.source, sourcePort);
       this.assertPortCapacity(connection.target, targetPort);
+      this.validatePortCompatibility(
+        { nodeId: connection.source.nodeId, port: sourcePort },
+        { nodeId: connection.target.nodeId, port: targetPort },
+      );
       for (const existing of this.connections.values()) {
         if (
           existing.source.nodeId === connection.source.nodeId &&
@@ -430,7 +662,8 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
           );
         }
       }
-      this.connections.set(connection.id, cloneConnection(connection));
+      const resolvedColor = this.resolveConnectionColor(sourcePort, targetPort, connection.color);
+      this.connections.set(connection.id, cloneConnection({ ...connection, color: resolvedColor }));
     }
     this.viewport = state.viewport
       ? { position: { ...state.viewport.position }, zoom: state.viewport.zoom }
@@ -460,6 +693,30 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     }
   }
 
+  private addTemplateInternal(
+    template: GraphNodeTemplate<TNodeData>,
+    notify: boolean,
+  ): GraphNodeTemplate<TNodeData> {
+    if (this.templates.has(template.id)) {
+      throw new FlowGraphError('TEMPLATE_EXISTS', `Template with id "${template.id}" already exists.`);
+    }
+    this.validateTemplate(template);
+    const stored = cloneTemplate(template);
+    this.templates.set(template.id, stored);
+    if (notify) {
+      this.emit('template:add', cloneTemplate(stored));
+    }
+    return stored;
+  }
+
+  private getTemplateOrThrow(id: string): GraphNodeTemplate<TNodeData> {
+    const template = this.templates.get(id);
+    if (!template) {
+      throw new FlowGraphError('TEMPLATE_NOT_FOUND', `Template with id "${id}" not found.`);
+    }
+    return template;
+  }
+
   private getNodeOrThrow(id: string): GraphNode<TNodeData> {
     const node = this.nodes.get(id);
     if (!node) {
@@ -485,14 +742,7 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
   }
 
   private validateNode(node: GraphNode<TNodeData>): void {
-    const portIds = new Set<string>();
-    for (const port of node.ports) {
-      if (portIds.has(port.id)) {
-        throw new FlowGraphError('INVALID_STATE', `Duplicate port id "${port.id}" on node "${node.id}".`);
-      }
-      portIds.add(port.id);
-      this.validatePort(port, node.id);
-    }
+    this.validatePorts(node.ports, node.id);
   }
 
   private validatePort(port: GraphPort, nodeId: string): void {
@@ -501,6 +751,16 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
     }
     if (port.maxConnections !== undefined && port.maxConnections < 0) {
       throw new FlowGraphError('INVALID_STATE', `Port "${port.id}" on node "${nodeId}" has invalid maxConnections.`);
+    }
+    if (port.acceptsColors) {
+      for (const color of port.acceptsColors) {
+        if (typeof color !== 'string' || color.trim() === '') {
+          throw new FlowGraphError(
+            'INVALID_STATE',
+            `Port "${port.id}" on node "${nodeId}" has an invalid acceptsColors entry.`,
+          );
+        }
+      }
     }
   }
 
@@ -515,6 +775,92 @@ export class FlowGraph<TNodeData extends Record<string, unknown> = Record<string
         throw new FlowGraphError('NODE_NOT_FOUND', `Group "${group.id}" references missing node "${nodeId}".`);
       }
     }
+  }
+
+  private validateTemplate(template: GraphNodeTemplate<TNodeData>): void {
+    this.validatePorts(template.ports, template.id);
+    if (template.defaults?.ports) {
+      this.validatePorts(template.defaults.ports, `${template.id}:defaults`);
+    }
+  }
+
+  private validatePorts(ports: GraphPort[], ownerId: string): void {
+    const portIds = new Set<string>();
+    for (const port of ports) {
+      if (portIds.has(port.id)) {
+        throw new FlowGraphError('INVALID_STATE', `Duplicate port id "${port.id}" on "${ownerId}".`);
+      }
+      portIds.add(port.id);
+      this.validatePort(port, ownerId);
+    }
+  }
+
+  private allowsColor(accepts: string[] | undefined, color: string | null): boolean {
+    if (!accepts || accepts.length === 0 || !color) {
+      return false;
+    }
+    return accepts.some(entry => {
+      if (!entry) {
+        return false;
+      }
+      if (entry === '*' || entry.toLowerCase() === 'any') {
+        return true;
+      }
+      return entry === color;
+    });
+  }
+
+  private validatePortCompatibility(
+    source: { nodeId: string; port: GraphPort },
+    target: { nodeId: string; port: GraphPort },
+  ): void {
+    const sourceColor = source.port.color ?? null;
+    const targetColor = target.port.color ?? null;
+
+    if (targetColor && source.port.acceptsColors && source.port.acceptsColors.length > 0) {
+      if (!this.allowsColor(source.port.acceptsColors, targetColor)) {
+        throw new FlowGraphError(
+          'PORT_COLOR_MISMATCH',
+          `Port "${source.port.id}" on node "${source.nodeId}" does not accept connections from colour "${targetColor}".`,
+        );
+      }
+    }
+
+    if (sourceColor && target.port.acceptsColors && target.port.acceptsColors.length > 0) {
+      if (!this.allowsColor(target.port.acceptsColors, sourceColor)) {
+        throw new FlowGraphError(
+          'PORT_COLOR_MISMATCH',
+          `Port "${target.port.id}" on node "${target.nodeId}" does not accept connections from colour "${sourceColor}".`,
+        );
+      }
+    }
+
+    if (sourceColor && targetColor && sourceColor !== targetColor) {
+      const targetAllows = this.allowsColor(target.port.acceptsColors, sourceColor);
+      const sourceAllows = this.allowsColor(source.port.acceptsColors, targetColor);
+      if (!targetAllows && !sourceAllows) {
+        throw new FlowGraphError(
+          'PORT_COLOR_MISMATCH',
+          `Colour mismatch: ${source.nodeId}:${source.port.id} (${sourceColor}) cannot connect to ${target.nodeId}:${target.port.id} (${targetColor}).`,
+        );
+      }
+    }
+  }
+
+  private resolveConnectionColor(sourcePort: GraphPort, targetPort: GraphPort, requested?: string): string | undefined {
+    if (requested) {
+      return requested;
+    }
+    if (sourcePort.color && targetPort.color && sourcePort.color === targetPort.color) {
+      return sourcePort.color;
+    }
+    if (sourcePort.color && this.allowsColor(targetPort.acceptsColors, sourcePort.color)) {
+      return sourcePort.color;
+    }
+    if (targetPort.color && this.allowsColor(sourcePort.acceptsColors, targetPort.color)) {
+      return targetPort.color;
+    }
+    return sourcePort.color ?? targetPort.color ?? requested;
   }
 
   private assertPortCapacity(address: PortAddress, port: GraphPort, excludeConnectionId?: string): void {

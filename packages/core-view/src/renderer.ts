@@ -11,6 +11,24 @@ import type {
 } from '@flowtomic/flowgraph';
 import type { D3ZoomEvent } from 'd3-zoom';
 
+export interface FlowgraphRendererTheme {
+  background: string;
+  nodeFill: string;
+  nodeStroke: string;
+  nodeLabel: string;
+  portFill: string;
+  connection: string;
+  connectionSelected: string;
+  draft: string;
+  miniMapBackground: string;
+}
+
+export type FlowgraphConnectionValidator<TNodeData extends Record<string, unknown>> = (
+  source: PortAddress,
+  target: PortAddress,
+  graph: FlowGraph<TNodeData>,
+) => boolean | string;
+
 export interface FlowgraphRendererViewport {
   position: Point;
   zoom: number;
@@ -26,7 +44,7 @@ export interface FlowgraphRendererOptions<TNodeData extends Record<string, unkno
   width?: number;
   /** Explicit height in pixels. Defaults to 100% of the host container. */
   height?: number;
-  /** Background color applied to the SVG canvas. */
+  /** @deprecated - use theme.background instead. */
   background?: string;
   /** Dimensions used for default node layout and connection anchors. */
   nodeSize?: { width: number; height: number };
@@ -38,10 +56,36 @@ export interface FlowgraphRendererOptions<TNodeData extends Record<string, unkno
   portRegionPadding?: number;
   /** Minimum bezier control distance for auto-generated connections. */
   connectionMinControlDistance?: number;
-  /** Allow pointer interactions (drag, zoom). Default true. */
+  /** Master switch for pointer interactions. */
   interactive?: boolean;
+  /** When true, wheel/pinch zooming is enabled. */
+  allowZoom?: boolean;
+  /** When true, canvas panning (dragging the background) is enabled. */
+  allowPan?: boolean;
+  /** When true, nodes can be dragged. */
+  allowNodeDrag?: boolean;
   /** Sync viewport changes back to FlowGraph.setViewport. Default true. */
   syncViewport?: boolean;
+  /** Display a minimap preview overlay. */
+  showMiniMap?: boolean;
+  /** Minimap location. */
+  miniMapPosition?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  /** Minimap dimensions. */
+  miniMapSize?: { width: number; height: number };
+  /** Connection arrow style. */
+  connectionArrow?: 'arrow' | 'circle' | 'none';
+  /** Render a grid behind the graph. */
+  showGrid?: boolean;
+  /** Grid cell size in pixels. */
+  gridSize?: number;
+  /** Snap dragged nodes to the nearest grid intersection. */
+  snapToGrid?: boolean;
+  /** Minimum and maximum zoom levels. */
+  zoomExtent?: [number, number];
+  /** Theme overrides. */
+  theme?: Partial<FlowgraphRendererTheme>;
+  /** Custom connection validation prior to committing edge creation. */
+  validateConnection?: FlowgraphConnectionValidator<TNodeData>;
   /** Invoked when a node is selected. */
   onNodeSelect?: (node: GraphNode<TNodeData>) => void;
   /** Invoked when a connection is selected. */
@@ -56,8 +100,46 @@ export interface FlowgraphRendererOptions<TNodeData extends Record<string, unkno
   initialSelection?: FlowgraphRendererSelection | null;
 }
 
-const DEFAULT_OPTIONS: Required<Pick<FlowgraphRendererOptions, 'background' | 'nodeSize' | 'nodeCornerRadius' | 'portSpacing' | 'portRegionPadding' | 'connectionMinControlDistance' | 'interactive' | 'syncViewport'>> = {
+const DEFAULT_THEME: FlowgraphRendererTheme = {
   background: '#0f172a',
+  nodeFill: '#1e293b',
+  nodeStroke: '#334155',
+  nodeLabel: '#e2e8f0',
+  portFill: '#38bdf8',
+  connection: '#38bdf8',
+  connectionSelected: '#facc15',
+  draft: '#475569',
+  miniMapBackground: 'rgba(15, 23, 42, 0.86)',
+};
+
+const DEFAULT_MINIMAP_SIZE = { width: 200, height: 140 };
+const DEFAULT_MINIMAP_PADDING = 12;
+const DEFAULT_GRID_SIZE = 32;
+const GRID_CANVAS_SIZE = 20000;
+
+const DEFAULT_OPTIONS: Required<
+  Pick<
+    FlowgraphRendererOptions,
+    | 'nodeSize'
+    | 'nodeCornerRadius'
+    | 'portSpacing'
+    | 'portRegionPadding'
+    | 'connectionMinControlDistance'
+    | 'interactive'
+    | 'syncViewport'
+    | 'allowZoom'
+    | 'allowPan'
+    | 'allowNodeDrag'
+    | 'showMiniMap'
+    | 'miniMapPosition'
+    | 'miniMapSize'
+    | 'connectionArrow'
+    | 'showGrid'
+    | 'gridSize'
+    | 'snapToGrid'
+    | 'zoomExtent'
+  >
+> = {
   nodeSize: { width: 220, height: 160 },
   nodeCornerRadius: 16,
   portSpacing: 28,
@@ -65,6 +147,17 @@ const DEFAULT_OPTIONS: Required<Pick<FlowgraphRendererOptions, 'background' | 'n
   connectionMinControlDistance: 80,
   interactive: true,
   syncViewport: true,
+  allowZoom: true,
+  allowPan: true,
+  allowNodeDrag: true,
+  showMiniMap: true,
+  miniMapPosition: 'top-right',
+  miniMapSize: DEFAULT_MINIMAP_SIZE,
+  connectionArrow: 'arrow',
+  showGrid: false,
+  gridSize: DEFAULT_GRID_SIZE,
+  snapToGrid: false,
+  zoomExtent: [0.3, 2.5],
 };
 
 interface DragState {
@@ -89,7 +182,6 @@ interface ConnectionDraft {
 interface FlowgraphRendererResolvedOptions<TNodeData extends Record<string, unknown>> {
   width?: number;
   height?: number;
-  background: string;
   nodeSize: { width: number; height: number };
   nodeCornerRadius: number;
   portSpacing: number;
@@ -97,12 +189,25 @@ interface FlowgraphRendererResolvedOptions<TNodeData extends Record<string, unkn
   connectionMinControlDistance: number;
   interactive: boolean;
   syncViewport: boolean;
+  allowZoom: boolean;
+  allowPan: boolean;
+  allowNodeDrag: boolean;
+  showMiniMap: boolean;
+  miniMapPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  miniMapSize: { width: number; height: number };
+  connectionArrow: 'arrow' | 'circle' | 'none';
+  showGrid: boolean;
+  gridSize: number;
+  snapToGrid: boolean;
+  zoomExtent: [number, number];
   onNodeSelect?: (node: GraphNode<TNodeData>) => void;
   onConnectionSelect?: (connection: GraphConnection) => void;
   onViewportChange?: (viewport: FlowgraphRendererViewport) => void;
   onConnectionCreate?: (connection: GraphConnection) => void;
   onConnectionError?: (error: unknown) => void;
   initialSelection: FlowgraphRendererSelection | null;
+  theme: FlowgraphRendererTheme;
+  validateConnection?: FlowgraphConnectionValidator<TNodeData>;
 }
 
 export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Record<string, unknown>> {
@@ -111,10 +216,21 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   private readonly svg: Selection<SVGSVGElement, unknown, null, undefined>;
   private readonly background: Selection<SVGRectElement, unknown, null, undefined>;
   private readonly scene: Selection<SVGGElement, unknown, null, undefined>;
+  private readonly gridRect: Selection<SVGRectElement, unknown, null, undefined>;
   private readonly connectionLayer: Selection<SVGGElement, unknown, null, undefined>;
   private readonly draftPath: Selection<SVGPathElement, unknown, null, undefined>;
   private readonly nodeLayer: Selection<SVGGElement, unknown, null, undefined>;
   private readonly zoomBehavior: ZoomBehavior<SVGSVGElement, unknown>;
+  private readonly overlay: Selection<HTMLElement, unknown, null, undefined>;
+  private readonly miniMapRoot: Selection<HTMLElement, unknown, null, undefined>;
+  private readonly miniMapSvg: Selection<SVGSVGElement, unknown, null, undefined>;
+  private readonly miniMapNodesGroup: Selection<SVGGElement, unknown, null, undefined>;
+  private readonly miniMapViewportRect: Selection<SVGRectElement, unknown, null, undefined>;
+  private readonly arrowMarker: Selection<SVGMarkerElement, unknown, null, undefined>;
+  private readonly circleMarker: Selection<SVGMarkerElement, unknown, null, undefined>;
+  private readonly gridPattern: Selection<SVGPatternElement, unknown, null, undefined>;
+  private readonly gridPathHorizontal: Selection<SVGPathElement, unknown, null, undefined>;
+  private readonly gridPathVertical: Selection<SVGPathElement, unknown, null, undefined>;
 
   private selection: FlowgraphRendererSelection = {};
   private options: FlowgraphRendererResolvedOptions<TNodeData>;
@@ -124,6 +240,9 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   private transform: ZoomTransform = zoomIdentity;
   private suppressViewportEmit = false;
   private applyingViewport = false;
+  private miniMapBounds = { minX: 0, minY: 0, width: 1, height: 1 };
+  private miniMapScale = 1;
+  private readonly gridPatternId: string;
 
   private pointerMoveHandler = (event: PointerEvent) => this.handlePointerMove(event);
   private pointerUpHandler = (event: PointerEvent) => this.handlePointerUp(event);
@@ -159,21 +278,35 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     this.background = this.svg
       .append('rect')
       .attr('class', 'fg-background')
-      .attr('fill', this.options.background)
+      .attr('fill', this.options.theme.background)
       .attr('width', '100%')
       .attr('height', '100%')
       .attr('pointer-events', 'all');
 
+    this.gridPatternId = `fg-grid-${Math.random().toString(16).slice(2)}`;
     const defs = this.svg.append('defs');
-    this.createDefs(defs);
+    const markers = this.createDefs(defs);
+    this.arrowMarker = markers.arrow;
+    this.circleMarker = markers.circle;
+    this.gridPattern = markers.grid;
+    this.gridPathHorizontal = markers.gridHorizontal;
+    this.gridPathVertical = markers.gridVertical;
 
     this.scene = this.svg.append('g').attr('class', 'fg-scene');
+    this.gridRect = this.scene
+      .append('rect')
+      .attr('class', 'fg-grid')
+      .attr('x', -GRID_CANVAS_SIZE / 2)
+      .attr('y', -GRID_CANVAS_SIZE / 2)
+      .attr('width', GRID_CANVAS_SIZE)
+      .attr('height', GRID_CANVAS_SIZE)
+      .attr('pointer-events', 'none');
     this.connectionLayer = this.scene.append('g').attr('class', 'fg-layer fg-layer--connections');
     this.draftPath = this.connectionLayer
       .append('path')
       .attr('class', 'fg-connection fg-connection--draft')
       .attr('fill', 'none')
-      .attr('stroke', '#475569')
+      .attr('stroke', this.options.theme.draft)
       .attr('stroke-width', 2)
       .attr('stroke-dasharray', '8 6')
       .attr('pointer-events', 'none')
@@ -181,12 +314,48 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .style('visibility', 'hidden');
     this.nodeLayer = this.scene.append('g').attr('class', 'fg-layer fg-layer--nodes');
 
+    this.overlay = select(container)
+      .append('div')
+      .attr('class', 'fg-overlay')
+      .style('position', 'absolute')
+      .style('inset', '0')
+      .style('pointer-events', 'none');
+
+    this.miniMapRoot = this.overlay
+      .append('div')
+      .attr('class', 'fg-minimap')
+      .style('position', 'absolute')
+      .style('pointer-events', 'none')
+      .style('border-radius', '12px')
+      .style('border', '1px solid rgba(148, 163, 184, 0.35)')
+      .style('overflow', 'hidden')
+      .style('box-shadow', '0 12px 30px rgba(15, 23, 42, 0.35)');
+
+    this.miniMapSvg = this.miniMapRoot
+      .append('svg')
+      .attr('class', 'fg-minimap-svg')
+      .attr('width', this.options.miniMapSize.width)
+      .attr('height', this.options.miniMapSize.height)
+      .attr('viewBox', `0 0 ${this.options.miniMapSize.width} ${this.options.miniMapSize.height}`)
+      .style('display', 'block');
+
+    this.miniMapNodesGroup = this.miniMapSvg.append('g').attr('class', 'fg-minimap-nodes');
+    this.miniMapViewportRect = this.miniMapSvg
+      .append('rect')
+      .attr('class', 'fg-minimap-viewport')
+      .attr('fill', 'none')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '4 3');
+
     this.zoomBehavior = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 2.5])
+      .scaleExtent(this.options.zoomExtent)
       .on('start', event => this.handleZoomStart(event))
       .on('zoom', event => this.handleZoom(event.transform))
       .on('end', () => this.handleZoomEnd());
 
+    this.applyVisualOptions();
+    this.applyMiniMapPosition();
+    this.updateMarkers();
     this.configureZoomFilter();
     this.updateInteractivity();
 
@@ -207,6 +376,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     this.unsubscribe?.();
     this.detachGlobalListeners();
     this.svg.remove();
+    this.overlay.remove();
     window.removeEventListener('keydown', this.keydownHandler);
   }
 
@@ -217,6 +387,8 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     }
     this.options = this.mergeOptions(next);
     this.applyVisualOptions();
+    this.applyMiniMapPosition();
+    this.updateMarkers();
     this.configureZoomFilter();
     this.updateInteractivity();
     const state = this.graph.getState();
@@ -257,24 +429,51 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   }
 
   private mergeOptions(options: FlowgraphRendererOptions<TNodeData>): FlowgraphRendererResolvedOptions<TNodeData> {
+    const theme: FlowgraphRendererTheme = {
+      ...DEFAULT_THEME,
+      ...(options.theme ?? {}),
+    };
+    if (options.background) {
+      theme.background = options.background;
+    }
+
+    const nodeSize = { ...DEFAULT_OPTIONS.nodeSize, ...(options.nodeSize ?? {}) };
+    const miniMapSize = { ...(options.miniMapSize ?? DEFAULT_OPTIONS.miniMapSize) };
+    const gridSize = Math.max(4, options.gridSize ?? DEFAULT_OPTIONS.gridSize);
+    const requestedZoom = options.zoomExtent ?? DEFAULT_OPTIONS.zoomExtent;
+    const zoomMin = Math.max(0.05, Math.min(requestedZoom[0], requestedZoom[1]));
+    const zoomMax = Math.max(zoomMin + 0.01, Math.max(requestedZoom[0], requestedZoom[1]));
+
     return {
       width: options.width,
       height: options.height,
-      background: options.background ?? DEFAULT_OPTIONS.background,
-      nodeSize: { ...DEFAULT_OPTIONS.nodeSize, ...(options.nodeSize ?? {}) },
+      nodeSize,
       nodeCornerRadius: options.nodeCornerRadius ?? DEFAULT_OPTIONS.nodeCornerRadius,
       portSpacing: options.portSpacing ?? DEFAULT_OPTIONS.portSpacing,
       portRegionPadding: options.portRegionPadding ?? DEFAULT_OPTIONS.portRegionPadding,
       connectionMinControlDistance:
         options.connectionMinControlDistance ?? DEFAULT_OPTIONS.connectionMinControlDistance,
       interactive: options.interactive ?? DEFAULT_OPTIONS.interactive,
+      allowZoom: options.allowZoom ?? DEFAULT_OPTIONS.allowZoom,
+      allowPan: options.allowPan ?? DEFAULT_OPTIONS.allowPan,
+      allowNodeDrag: options.allowNodeDrag ?? DEFAULT_OPTIONS.allowNodeDrag,
       syncViewport: options.syncViewport ?? DEFAULT_OPTIONS.syncViewport,
+      showMiniMap: options.showMiniMap ?? DEFAULT_OPTIONS.showMiniMap,
+      miniMapPosition: options.miniMapPosition ?? DEFAULT_OPTIONS.miniMapPosition,
+      miniMapSize,
+      connectionArrow: options.connectionArrow ?? DEFAULT_OPTIONS.connectionArrow,
+      showGrid: options.showGrid ?? DEFAULT_OPTIONS.showGrid,
+      gridSize,
+      snapToGrid: options.snapToGrid ?? DEFAULT_OPTIONS.snapToGrid,
+      zoomExtent: [zoomMin, zoomMax],
       onNodeSelect: options.onNodeSelect,
       onConnectionSelect: options.onConnectionSelect,
       onViewportChange: options.onViewportChange,
       onConnectionCreate: options.onConnectionCreate,
       onConnectionError: options.onConnectionError,
       initialSelection: options.initialSelection ?? null,
+      theme,
+      validateConnection: options.validateConnection,
     };
   }
 
@@ -289,15 +488,28 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     } else {
       this.svg.attr('height', '100%');
     }
-    this.background.attr('fill', this.options.background);
+    this.background.attr('fill', this.options.theme.background);
+    this.miniMapRoot
+      .style('background', this.options.theme.miniMapBackground)
+      .style('display', this.options.showMiniMap ? 'block' : 'none');
+    this.miniMapSvg
+      .attr('width', this.options.miniMapSize.width)
+      .attr('height', this.options.miniMapSize.height)
+      .attr('viewBox', `0 0 ${this.options.miniMapSize.width} ${this.options.miniMapSize.height}`);
+    this.miniMapViewportRect.attr('stroke', this.options.theme.connection);
+    this.gridRect
+      .style('visibility', this.options.showGrid ? 'visible' : 'hidden')
+      .attr('fill', this.options.showGrid ? `url(#${this.gridPatternId})` : 'none');
+    this.updateGridPattern();
+    this.updateZoomExtent();
   }
 
   private updateInteractivity(): void {
     if (this.options.interactive) {
       this.svg.call(this.zoomBehavior);
       this.svg.on('dblclick.zoom', null);
-      this.svg.style('cursor', 'grab');
-      this.background.attr('pointer-events', 'all');
+      this.svg.style('cursor', this.options.allowPan ? 'grab' : 'default');
+      this.background.attr('pointer-events', this.options.allowPan || this.options.allowZoom ? 'all' : 'none');
     } else {
       this.svg.on('.zoom', null);
       this.svg.style('cursor', 'default');
@@ -309,19 +521,54 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     this.zoomBehavior.filter((event: any) => this.shouldAllowZoom(event));
   }
 
+  private updateMarkers(): void {
+    if (this.arrowMarker) {
+      this.arrowMarker.selectAll('path').attr('stroke', 'context-stroke');
+    }
+    if (this.circleMarker) {
+      this.circleMarker.selectAll('circle').attr('fill', 'context-stroke');
+    }
+  }
+
+  private updateGridPattern(): void {
+    if (!this.gridPattern) {
+      return;
+    }
+    const size = Math.max(4, this.options.gridSize);
+    this.gridPattern.attr('width', size).attr('height', size);
+    this.gridPathHorizontal
+      .attr('d', `M0 ${size} H${size}`)
+      .attr('stroke', this.options.theme.nodeStroke)
+      .attr('stroke-width', 0.5)
+      .attr('stroke-opacity', 0.35);
+    this.gridPathVertical
+      .attr('d', `M${size} 0 V${size}`)
+      .attr('stroke', this.options.theme.nodeStroke)
+      .attr('stroke-width', 0.5)
+      .attr('stroke-opacity', 0.35);
+  }
+
+  private updateZoomExtent(): void {
+    this.zoomBehavior.scaleExtent(this.options.zoomExtent);
+  }
+
   private shouldAllowZoom(event: any): boolean {
     if (!this.options.interactive) {
       return false;
     }
-    const target = event?.target instanceof Element ? (event.target as Element) : null;
-    if (!target) {
-      return true;
-    }
     const type = typeof event?.type === 'string' ? event.type : '';
-    if (type.startsWith('pointer')) {
-      if (target.closest('g.fg-node') || target.closest('g.fg-node-port')) {
+    if (type === 'wheel' || type === 'dblclick') {
+      return this.options.allowZoom;
+    }
+    if (type.startsWith('pointer') || type.startsWith('touch')) {
+      if (!this.options.allowPan) {
         return false;
       }
+      const target = event?.target instanceof Element ? (event.target as Element) : null;
+      if (target && (target.closest('g.fg-node') || target.closest('g.fg-node-port'))) {
+        return false;
+      }
+      return true;
     }
     return true;
   }
@@ -335,8 +582,43 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     style.touchAction = 'none';
   }
 
-  private createDefs(defs: Selection<SVGDefsElement, unknown, null, undefined>): void {
-    const marker = defs
+  private applyMiniMapPosition(): void {
+    const root = this.miniMapRoot;
+    if (!root) {
+      return;
+    }
+    if (!this.options.showMiniMap) {
+      root.style('display', 'none');
+      return;
+    }
+    root.style('display', 'block');
+    const { miniMapPosition, miniMapSize } = this.options;
+    const positions: Record<'top-left' | 'top-right' | 'bottom-left' | 'bottom-right', { top: string | null; right: string | null; bottom: string | null; left: string | null }> = {
+      'top-left': { top: '16px', right: null, bottom: null, left: '16px' },
+      'top-right': { top: '16px', right: '16px', bottom: null, left: null },
+      'bottom-left': { top: null, right: null, bottom: '16px', left: '16px' },
+      'bottom-right': { top: null, right: '16px', bottom: '16px', left: null },
+    };
+    const position = positions[miniMapPosition];
+    root
+      .style('top', position.top ?? 'auto')
+      .style('right', position.right ?? 'auto')
+      .style('bottom', position.bottom ?? 'auto')
+      .style('left', position.left ?? 'auto')
+      .style('width', `${miniMapSize.width}px`)
+      .style('height', `${miniMapSize.height}px`);
+  }
+
+  private createDefs(
+    defs: Selection<SVGDefsElement, unknown, null, undefined>,
+  ): {
+    arrow: Selection<SVGMarkerElement, unknown, null, undefined>;
+    circle: Selection<SVGMarkerElement, unknown, null, undefined>;
+    grid: Selection<SVGPatternElement, unknown, null, undefined>;
+    gridHorizontal: Selection<SVGPathElement, unknown, null, undefined>;
+    gridVertical: Selection<SVGPathElement, unknown, null, undefined>;
+  } {
+    const arrow = defs
       .append('marker')
       .attr('id', 'fg-arrow')
       .attr('viewBox', '0 0 12 12')
@@ -347,12 +629,50 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('orient', 'auto-start-reverse')
       .attr('markerUnits', 'userSpaceOnUse');
 
-    marker
+    arrow
       .append('path')
       .attr('d', 'M2,2 L10,6 L2,10')
       .attr('fill', 'none')
-      .attr('stroke', '#38bdf8')
+      .attr('stroke', 'context-stroke')
       .attr('stroke-width', 1.5);
+
+    const circle = defs
+      .append('marker')
+      .attr('id', 'fg-circle')
+      .attr('viewBox', '0 0 12 12')
+      .attr('refX', 6)
+      .attr('refY', 6)
+      .attr('markerWidth', 10)
+      .attr('markerHeight', 10)
+      .attr('orient', 'auto')
+      .attr('markerUnits', 'userSpaceOnUse');
+
+    circle
+      .append('circle')
+      .attr('cx', 6)
+      .attr('cy', 6)
+      .attr('r', 3)
+      .attr('fill', 'context-stroke')
+      .attr('stroke', 'none');
+
+    const grid = defs
+      .append('pattern')
+      .attr('id', this.gridPatternId)
+      .attr('patternUnits', 'userSpaceOnUse')
+      .attr('width', this.options.gridSize)
+      .attr('height', this.options.gridSize);
+
+    const gridHorizontal = grid
+      .append('path')
+      .attr('class', 'fg-grid-h')
+      .attr('fill', 'none');
+
+    const gridVertical = grid
+      .append('path')
+      .attr('class', 'fg-grid-v')
+      .attr('fill', 'none');
+
+    return { arrow, circle, grid, gridHorizontal, gridVertical } as const;
   }
 
   private render(state: FlowGraphState<TNodeData>): void {
@@ -368,6 +688,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     this.renderNodes(state);
     this.syncSelection();
     this.updateDraftPath();
+    this.updateMiniMap(state);
   }
 
   private renderNodes(state: FlowGraphState<TNodeData>): void {
@@ -381,7 +702,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .enter()
       .append('g')
       .attr('class', 'fg-node')
-      .attr('cursor', this.options.interactive ? 'grab' : 'default')
+      .attr('cursor', this.options.interactive && this.options.allowNodeDrag ? 'grab' : 'default')
       .on('pointerdown', (event, node) => this.handleNodePointerDown(event as PointerEvent, node))
       .on('dblclick', (event, node) => this.handleNodeDoubleClick(event as PointerEvent, node));
 
@@ -392,8 +713,8 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('height', this.options.nodeSize.height)
       .attr('rx', this.options.nodeCornerRadius)
       .attr('ry', this.options.nodeCornerRadius)
-      .attr('fill', '#1e293b')
-      .attr('stroke', '#334155')
+      .attr('fill', this.options.theme.nodeFill)
+      .attr('stroke', this.options.theme.nodeStroke)
       .attr('stroke-width', 1.5);
 
     entered
@@ -401,7 +722,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('class', 'fg-node-label')
       .attr('x', 16)
       .attr('y', 26)
-      .attr('fill', '#e2e8f0')
+      .attr('fill', this.options.theme.nodeLabel)
       .attr('font-family', 'sans-serif')
       .attr('font-size', 14)
       .attr('font-weight', 600)
@@ -420,18 +741,21 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
     merged
       .attr('transform', node => `translate(${node.position.x}, ${node.position.y})`)
       .classed('is-readonly', node => !!node.readonly)
-      .attr('cursor', this.options.interactive ? 'grab' : 'default');
+      .attr('cursor', this.options.interactive && this.options.allowNodeDrag ? 'grab' : 'default');
 
     merged
       .select<SVGRectElement>('rect.fg-node-body')
       .attr('width', this.options.nodeSize.width)
       .attr('height', this.options.nodeSize.height)
       .attr('rx', this.options.nodeCornerRadius)
-      .attr('ry', this.options.nodeCornerRadius);
+      .attr('ry', this.options.nodeCornerRadius)
+      .attr('fill', this.options.theme.nodeFill)
+      .attr('stroke', this.options.theme.nodeStroke);
 
     merged
       .select<SVGTextElement>('text.fg-node-label')
-      .text(node => node.label ?? node.id);
+      .text(node => node.label ?? node.id)
+      .attr('fill', this.options.theme.nodeLabel);
 
     merged.each((node, index, groups) => {
       const group = select(groups[index]);
@@ -461,14 +785,14 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('r', 5)
       .attr('cx', -10)
       .attr('cy', 0)
-      .attr('fill', '#38bdf8');
+      .attr('fill', this.options.theme.portFill);
 
     inputEnter
       .append('text')
       .attr('class', 'fg-node-port-label')
       .attr('x', 0)
       .attr('y', 4)
-      .attr('fill', '#cbd5f5')
+      .attr('fill', this.options.theme.nodeLabel)
       .attr('font-size', 12)
       .attr('font-family', 'sans-serif')
       .text(port => port.label ?? port.id);
@@ -479,6 +803,14 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('data-node-id', node.id)
       .attr('data-port-direction', 'input')
       .attr('data-port-id', port => port.id);
+
+    inputMerged
+      .selectAll<SVGCircleElement, GraphPort>('circle.fg-node-port-handle')
+      .attr('fill', this.options.theme.portFill);
+
+    inputMerged
+      .selectAll<SVGTextElement, GraphPort>('text.fg-node-port-label')
+      .attr('fill', this.options.theme.nodeLabel);
 
     const outputSelection = group
       .select<SVGGElement>('g.fg-node-ports--output')
@@ -498,7 +830,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('x', this.options.nodeSize.width - 60)
       .attr('y', 4)
       .attr('text-anchor', 'end')
-      .attr('fill', '#cbd5f5')
+      .attr('fill', this.options.theme.nodeLabel)
       .attr('font-size', 12)
       .attr('font-family', 'sans-serif')
       .text(port => port.label ?? port.id);
@@ -509,7 +841,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .attr('r', 5)
       .attr('cx', this.options.nodeSize.width + 10)
       .attr('cy', 0)
-      .attr('fill', '#38bdf8');
+      .attr('fill', this.options.theme.portFill);
 
     const outputMerged = outputEnter.merge(outputSelection);
     outputMerged
@@ -519,7 +851,12 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
 
     outputMerged
       .select<SVGCircleElement>('circle.fg-node-port-handle')
-      .attr('cx', this.options.nodeSize.width + 10);
+      .attr('cx', this.options.nodeSize.width + 10)
+      .attr('fill', this.options.theme.portFill);
+
+    outputMerged
+      .selectAll<SVGTextElement, GraphPort>('text.fg-node-port-label')
+      .attr('fill', this.options.theme.nodeLabel);
 
     outputMerged
       .attr('data-node-id', node.id)
@@ -556,16 +893,29 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .append('path')
       .attr('class', 'fg-connection fg-connection--entity')
       .attr('fill', 'none')
-      .attr('stroke', '#38bdf8')
+      .attr('stroke', connection => connection.color ?? this.options.theme.connection)
       .attr('stroke-width', 2)
-      .attr('marker-end', 'url(#fg-arrow)')
       .attr('opacity', 0.92)
       .on('pointerdown', (event, connection) => this.handleConnectionPointerDown(event as PointerEvent, connection))
       .on('dblclick', (event, connection) => this.handleConnectionDoubleClick(event as PointerEvent, connection));
 
     const merged = entered.merge(selection as Selection<SVGPathElement, GraphConnection>);
+    const markerUrl = this.getConnectionMarkerUrl();
+    merged
+      .attr('d', connection => this.getConnectionPath(connection, nodeLookup))
+      .attr('stroke', connection => connection.color ?? this.options.theme.connection)
+      .attr('marker-end', markerUrl ?? null);
+  }
 
-    merged.attr('d', connection => this.getConnectionPath(connection, nodeLookup));
+  private getConnectionMarkerUrl(): string | null {
+    switch (this.options.connectionArrow) {
+      case 'arrow':
+        return 'url(#fg-arrow)';
+      case 'circle':
+        return 'url(#fg-circle)';
+      default:
+        return null;
+    }
   }
 
   private getConnectionPath(
@@ -630,10 +980,12 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
         this.suppressViewportEmit = false;
       }
     }
+
+    this.updateMiniMapViewport();
   }
 
   private handleZoomStart(event: D3ZoomEvent<SVGSVGElement, unknown>): void {
-    if (!this.options.interactive) {
+    if (!this.options.interactive || !this.options.allowPan) {
       return;
     }
     const sourceEvent = event.sourceEvent;
@@ -643,7 +995,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
   }
 
   private handleZoomEnd(): void {
-    if (!this.options.interactive) {
+    if (!this.options.interactive || !this.options.allowPan) {
       return;
     }
     if (!this.dragState && !this.draft) {
@@ -692,11 +1044,16 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       return;
     }
     event.stopPropagation();
-    const element = event.currentTarget as SVGGraphicsElement | null;
-    element?.setPointerCapture?.(event.pointerId);
     this.selection = { nodeId: node.id, connectionId: null };
     this.options.onNodeSelect?.(node);
     this.syncSelection();
+
+    if (!this.options.allowNodeDrag) {
+      return;
+    }
+
+    const element = event.currentTarget as SVGGraphicsElement | null;
+    element?.setPointerCapture?.(event.pointerId);
 
     this.dragState = {
       nodeId: node.id,
@@ -707,6 +1064,11 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       startY: node.position.y,
       element,
     };
+
+    if (this.options.interactive) {
+      this.svg.on('.zoom', null);
+      this.svg.style('cursor', 'grabbing');
+    }
 
     window.addEventListener('pointermove', this.pointerMoveHandler);
     window.addEventListener('pointerup', this.pointerUpHandler, { once: false });
@@ -723,8 +1085,13 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       const scale = this.transform.k || 1;
       const deltaX = (event.clientX - this.dragState.originX) / scale;
       const deltaY = (event.clientY - this.dragState.originY) / scale;
-      const nextX = this.dragState.startX + deltaX;
-      const nextY = this.dragState.startY + deltaY;
+      let nextX = this.dragState.startX + deltaX;
+      let nextY = this.dragState.startY + deltaY;
+      if (this.options.snapToGrid) {
+        const size = Math.max(4, this.options.gridSize);
+        nextX = Math.round(nextX / size) * size;
+        nextY = Math.round(nextY / size) * size;
+      }
       this.graph.moveNode(this.dragState.nodeId, { x: nextX, y: nextY });
       return;
     }
@@ -745,16 +1112,36 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       const draft = this.draft;
       this.draft = null;
       if (draft.target) {
-        try {
-          const connection = this.graph.addConnection({
-            source: draft.source,
-            target: draft.target,
-          });
-          this.selection = { nodeId: null, connectionId: connection.id };
-          this.options.onConnectionCreate?.(connection);
-          this.options.onConnectionSelect?.(connection);
-        } catch (error) {
-          this.options.onConnectionError?.(error);
+        let allowConnection = true;
+        const validator = this.options.validateConnection;
+        if (validator) {
+          try {
+            const result = validator(draft.source, draft.target, this.graph);
+            if (result === false) {
+              allowConnection = false;
+              this.options.onConnectionError?.(new Error('Connection is not allowed.'));
+            } else if (typeof result === 'string') {
+              allowConnection = false;
+              this.options.onConnectionError?.(new Error(result));
+            }
+          } catch (error) {
+            allowConnection = false;
+            this.options.onConnectionError?.(error);
+          }
+        }
+
+        if (allowConnection) {
+          try {
+            const connection = this.graph.addConnection({
+              source: draft.source,
+              target: draft.target,
+            });
+            this.selection = { nodeId: null, connectionId: connection.id };
+            this.options.onConnectionCreate?.(connection);
+            this.options.onConnectionSelect?.(connection);
+          } catch (error) {
+            this.options.onConnectionError?.(error);
+          }
         }
       }
       this.updateDraftPath();
@@ -763,7 +1150,9 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
 
     if (!this.dragState && !this.draft) {
       if (this.options.interactive) {
-        this.svg.style('cursor', 'grab');
+        this.svg.style('cursor', this.options.allowPan ? 'grab' : 'default');
+        this.svg.call(this.zoomBehavior);
+        this.configureZoomFilter();
       }
       this.detachGlobalListeners();
     }
@@ -808,7 +1197,11 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
       .selectAll<SVGPathElement, GraphConnection>('path.fg-connection--entity')
       .classed('is-selected', connection => connection.id === connectionId)
       .attr('stroke-width', connection => (connection.id === connectionId ? 3 : 2))
-      .attr('stroke', connection => (connection.id === connectionId ? '#f8fafc' : '#38bdf8'))
+      .attr('stroke', connection =>
+        connection.id === connectionId
+          ? this.options.theme.connectionSelected ?? connection.color ?? this.options.theme.connection
+          : connection.color ?? this.options.theme.connection,
+      )
       .attr('opacity', connection => (connection.id === connectionId ? 1 : 0.92));
   }
 
@@ -908,7 +1301,7 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
 
     this.draftPath
       .style('visibility', 'visible')
-      .attr('stroke', draft.target ? '#38bdf8' : '#475569')
+      .attr('stroke', draft.target ? this.options.theme.connection : this.options.theme.draft)
       .attr('d', path);
 
     this.updateDraftIndicators();
@@ -933,6 +1326,150 @@ export class FlowgraphRenderer<TNodeData extends Record<string, unknown> = Recor
         element.getAttribute('data-port-id') === draft.target.portId
       );
     });
+
+    portSelection.each((_, index, groups) => {
+      const element = select(groups[index]);
+      const circle = element.select<SVGCircleElement>('circle.fg-node-port-handle');
+      if (circle.empty()) {
+        return;
+      }
+      const nodeId = element.attr('data-node-id');
+      const portId = element.attr('data-port-id');
+      if (draft && draft.source.nodeId === nodeId && draft.source.portId === portId) {
+        circle.attr('fill', this.options.theme.connectionSelected);
+      } else if (draft && draft.target && draft.target.nodeId === nodeId && draft.target.portId === portId) {
+        circle.attr('fill', this.options.theme.connection);
+      } else {
+        circle.attr('fill', this.options.theme.portFill);
+      }
+    });
+  }
+
+  private updateMiniMap(state: FlowGraphState<TNodeData>): void {
+    if (!this.options.showMiniMap) {
+      this.miniMapRoot.style('display', 'none');
+      return;
+    }
+    if (!this.miniMapRoot || !this.miniMapNodesGroup) {
+      return;
+    }
+    if (!state.nodes.length) {
+      this.miniMapRoot.style('display', 'none');
+      return;
+    }
+
+    this.miniMapRoot.style('display', 'block');
+
+    const padding = DEFAULT_MINIMAP_PADDING;
+    const { width: mapWidth, height: mapHeight } = this.options.miniMapSize;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const node of state.nodes) {
+      const width = node.size?.width ?? this.options.nodeSize.width;
+      const height = node.size?.height ?? this.options.nodeSize.height;
+      minX = Math.min(minX, node.position.x);
+      minY = Math.min(minY, node.position.y);
+      maxX = Math.max(maxX, node.position.x + width);
+      maxY = Math.max(maxY, node.position.y + height);
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      this.miniMapRoot.style('display', 'none');
+      return;
+    }
+
+    const boundsWidth = Math.max(1, maxX - minX);
+    const boundsHeight = Math.max(1, maxY - minY);
+    this.miniMapBounds = { minX, minY, width: boundsWidth, height: boundsHeight };
+
+    const scaleX = (mapWidth - padding * 2) / boundsWidth;
+    const scaleY = (mapHeight - padding * 2) / boundsHeight;
+    this.miniMapScale = Math.max(0.001, Math.min(scaleX, scaleY));
+
+    const nodesData = state.nodes.map(node => {
+      const width = node.size?.width ?? this.options.nodeSize.width;
+      const height = node.size?.height ?? this.options.nodeSize.height;
+      return {
+        id: node.id,
+        x: (node.position.x - minX) * this.miniMapScale + padding,
+        y: (node.position.y - minY) * this.miniMapScale + padding,
+        width: Math.max(2, width * this.miniMapScale),
+        height: Math.max(2, height * this.miniMapScale),
+      };
+    });
+
+    const selection = this.miniMapNodesGroup
+      .selectAll<SVGRectElement, (typeof nodesData)[number]>('rect')
+      .data(nodesData, node => node.id);
+
+    selection.exit().remove();
+
+    const entered = selection
+      .enter()
+      .append('rect')
+      .attr('rx', 2)
+      .attr('ry', 2)
+      .attr('stroke-width', 1);
+
+    const merged = entered.merge(selection as Selection<SVGRectElement, (typeof nodesData)[number]>);
+    merged
+      .attr('x', node => node.x)
+      .attr('y', node => node.y)
+      .attr('width', node => node.width)
+      .attr('height', node => node.height)
+      .attr('fill', this.options.theme.nodeFill)
+      .attr('fill-opacity', 0.55)
+      .attr('stroke', this.options.theme.nodeStroke)
+      .attr('stroke-opacity', 0.7);
+
+    this.updateMiniMapViewport();
+  }
+
+  private updateMiniMapViewport(): void {
+    if (!this.options.showMiniMap) {
+      this.miniMapViewportRect.style('display', 'none');
+      return;
+    }
+    if (!this.miniMapRoot || !this.miniMapViewportRect) {
+      return;
+    }
+    if (this.miniMapBounds.width <= 0 || this.miniMapBounds.height <= 0) {
+      this.miniMapViewportRect.style('display', 'none');
+      return;
+    }
+    const containerRect = this.container.getBoundingClientRect();
+    if (containerRect.width === 0 || containerRect.height === 0) {
+      return;
+    }
+
+    const padding = DEFAULT_MINIMAP_PADDING;
+    const { width: mapWidth, height: mapHeight } = this.options.miniMapSize;
+    const viewWidth = containerRect.width / this.transform.k;
+    const viewHeight = containerRect.height / this.transform.k;
+    const viewX = -this.transform.x / this.transform.k;
+    const viewY = -this.transform.y / this.transform.k;
+
+    const rawX = (viewX - this.miniMapBounds.minX) * this.miniMapScale + padding;
+    const rawY = (viewY - this.miniMapBounds.minY) * this.miniMapScale + padding;
+    const rawWidth = Math.max(4, viewWidth * this.miniMapScale);
+    const rawHeight = Math.max(4, viewHeight * this.miniMapScale);
+
+    const maxX = mapWidth - padding - rawWidth;
+    const maxY = mapHeight - padding - rawHeight;
+    const clampedX = Math.max(padding, Math.min(rawX, maxX));
+    const clampedY = Math.max(padding, Math.min(rawY, maxY));
+
+    this.miniMapViewportRect
+      .style('display', 'block')
+      .attr('x', clampedX)
+      .attr('y', clampedY)
+      .attr('width', Math.min(rawWidth, mapWidth - padding * 2))
+      .attr('height', Math.min(rawHeight, mapHeight - padding * 2))
+      .attr('stroke', this.options.theme.connection);
   }
 
   private handleKeydown(event: KeyboardEvent): void {
