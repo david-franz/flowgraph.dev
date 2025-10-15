@@ -13,6 +13,8 @@
     "@flowtomic/flowgraph-core-view": "file:../core-view",
     "@flowtomic/flowgraph-react": "file:../react",
     "clsx": "^2.1.1",
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0"
